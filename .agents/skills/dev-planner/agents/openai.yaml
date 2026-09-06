@@ -1,0 +1,4 @@
+interface:
+  display_name: "03 开发计划"
+  short_description: "按工作规模选择短任务或阶段计划，维护依赖、有效范围与可验证的交付证据。"
+  default_prompt: "使用 $dev-planner 根据有效契约和规模选择短任务或 Phase，更新相关计划与依赖。"

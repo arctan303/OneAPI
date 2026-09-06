@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜代码审查"
+  short_description: "独立复核契约、回归与风险；同一 diff 去重，并按收敛边界停止复审。"
+  default_prompt: "使用 $reviewer 对当前审查指纹执行一次独立审查；相同输入复用结论，实质修复后聚焦复核，无进展时暂停并保留恢复条件。"

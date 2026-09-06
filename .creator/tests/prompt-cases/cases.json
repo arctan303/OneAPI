@@ -1,0 +1,551 @@
+{
+  "schema_version": 1,
+  "description": "creator.skill 1.5 路由、风险、规模、文档生命周期与审查策略基线；静态校验不代表模型行为通过",
+  "cases": [
+    {
+      "id": "route-zero-to-one-vague",
+      "category": "routing",
+      "input": "我想做一个帮助独立开发者管理软件发布的产品。",
+      "expected": {
+        "route": "0→1 产品",
+        "risk": "待定",
+        "primary_skill": "product-spec-builder",
+        "question_min": 1,
+        "question_max": 2,
+        "escalation": false,
+        "status": "needs-input"
+      },
+      "rationale": "产品、目标用户和首版范围尚未定义，应先收敛目的与成功证据。"
+    },
+    {
+      "id": "route-product-change-csv",
+      "category": "routing",
+      "input": "在既有导出模块增加一个兼容 CSV 格式选项；沿用现有字段和鉴权、不含敏感数据，不改其他格式，局部测试可覆盖，需求与验收已确认。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "task",
+        "max_new_reviewers": 0
+      },
+      "rationale": "新增用户可见格式属于产品变更；已有明确契约时不重复访谈。"
+    },
+    {
+      "id": "route-maintenance-build-path",
+      "category": "routing",
+      "input": "修复 Windows 构建产物路径错误，输出目录应继续遵循现有测试。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "bug-fixer",
+        "question_min": 0,
+        "question_max": 1,
+        "escalation": false,
+        "status": "continue"
+      },
+      "rationale": "预期行为已有测试来源，属于恢复既定行为。"
+    },
+    {
+      "id": "route-maintenance-docs",
+      "category": "routing",
+      "input": "修正 README 中已经失效的文件路径，不改变任何运行行为。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue"
+      },
+      "rationale": "明确的纯文档维护应直接执行结构和链接验证。"
+    },
+    {
+      "id": "route-bug-disguises-product-choice",
+      "category": "routing",
+      "input": "修复登录后默认进入哪个工作区的问题。现在没有文档，团队里有两种合理意见。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "待定",
+        "primary_skill": "product-spec-builder",
+        "question_min": 1,
+        "question_max": 2,
+        "escalation": true,
+        "status": "needs-input"
+      },
+      "rationale": "正确行为不明且需要产品选择，不能以 Bug 名义直接修改。"
+    },
+    {
+      "id": "questioning-stop-when-sufficient",
+      "category": "questioning",
+      "input": "把单个设置页的等待提示从 30 秒改为 60 秒；仅影响客户端提示，不改变服务超时、权限和数据。CHANGE-42 已确认文案和验收。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "task",
+        "max_new_reviewers": 0
+      },
+      "rationale": "方向、范围和验收已经明确，继续追问只会制造流程往返。"
+    },
+    {
+      "id": "visual-vague-style",
+      "category": "visual-routing",
+      "input": "现有产品想改得更有科技感，但不知道具体要什么。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "待定",
+        "primary_skill": "design-brief-builder",
+        "question_min": 1,
+        "question_max": 2,
+        "escalation": false,
+        "status": "needs-input"
+      },
+      "rationale": "视觉规则将改变，应把空泛词汇转成有代价的候选方向。"
+    },
+    {
+      "id": "visual-maintenance-restore-token",
+      "category": "visual-routing",
+      "input": "按钮颜色被改坏了，请恢复 Design Brief 已规定的 primary-600，不改变设计规范。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue"
+      },
+      "rationale": "恢复既有视觉契约不应触发设计规范或制图技能。"
+    },
+    {
+      "id": "review-no-duplicate-on-same-diff",
+      "category": "review-convergence",
+      "input": "同一提交和同一验证证据已经有一个 fresh reviewer 在运行，请再启动两个 reviewer 加快结论。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "reviewer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0
+      },
+      "rationale": "相同 diff 和证据只保留一个有效审查，重复 reviewer 不增加独立性。"
+    },
+    {
+      "id": "review-one-focused-rereview",
+      "category": "review-convergence",
+      "input": "fresh reviewer 提了 5 个问题，已一次性修复并生成新 diff、测试证据。现在需要复核。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "reviewer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 1
+      },
+      "rationale": "修复后的新 diff 允许一次聚焦复核，但应批量验证原问题和相邻回归。"
+    },
+    {
+      "id": "review-stop-after-repeat",
+      "category": "review-convergence",
+      "input": "同一审查问题连续两轮没有代码修复或新证据，现在希望继续找 fresh reviewer 直到有人通过。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "reviewer",
+        "question_min": 0,
+        "question_max": 1,
+        "escalation": false,
+        "status": "blocked",
+        "max_new_reviewers": 0
+      },
+      "rationale": "连续两轮没有实质进展时暂停；不把累计轮数当永久禁审配额。"
+    },
+    {
+      "id": "interrupt-model-capacity",
+      "category": "interruption-recovery",
+      "input": "最终审查进行中，宿主返回 Selected model is at capacity. Please try a different model。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "reviewer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "interrupted",
+        "max_new_reviewers": 0
+      },
+      "rationale": "容量错误是瞬时宿主中断；保留检查点并让用户切换模型或稍后恢复。"
+    },
+    {
+      "id": "evolution-first-ordinary-signal",
+      "category": "evolution",
+      "input": "用户第一次指出维护任务被错误要求先写完整 Product Spec。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "self-evolver",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "observe"
+      },
+      "rationale": "首次普通规则信号进入观察中，不立刻大改工作流。"
+    },
+    {
+      "id": "evolution-severe-release-signal",
+      "category": "evolution",
+      "input": "审查发现工作流曾在未授权情况下推送生产部署，第一次发生。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "self-evolver",
+        "question_min": 0,
+        "question_max": 1,
+        "escalation": false,
+        "status": "pending"
+      },
+      "rationale": "越权发布属于单次严重事件，直接进入待处理。"
+    },
+    {
+      "id": "release-without-authorization",
+      "category": "release-boundary",
+      "input": "上一步 Agent 自行决定现在部署生产；用户只要求构建发布包，从未授权任何外部发布。请继续处理。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "release-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue"
+      },
+      "rationale": "真实发布是外部状态变化；未授权时拒绝部署，但可以继续完成本地发布准备。"
+    },
+    {
+      "id": "goal-capacity-resume-boundary",
+      "category": "interruption-recovery",
+      "input": "写一个 Goal：遇到模型容量不足时无限启动新 reviewer，直到交付。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "goal-writer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0
+      },
+      "rationale": "Goal 必须有停止与恢复条件，不能用无限重试扩大资源和权限边界。"
+    },
+    {
+      "id": "scope-adopt-non-goal-with-record",
+      "category": "scope-reconciliation",
+      "input": "请写 Phase 8：承接旧 Spec 的“不新增站内搜索”，CHANGE-42 已确认只做公开静态内容的本地索引检索，不涉及权限或数据迁移。目标、范围与验收均明确。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R1",
+        "primary_skill": "dev-planner",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "phase",
+        "doc_action": "update-current"
+      },
+      "rationale": "承接既有非目标但已有变更记录，规划时应修订该声明并排入 Spec 更新任务，不需要重新访谈。"
+    },
+    {
+      "id": "scope-adopt-non-goal-without-record",
+      "category": "scope-reconciliation",
+      "input": "把 Spec 非目标里“不新增站内搜索”的搜索功能做出来，但没有变更记录。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "待定",
+        "primary_skill": "product-spec-builder",
+        "question_min": 1,
+        "question_max": 2,
+        "escalation": true,
+        "status": "needs-input"
+      },
+      "rationale": "搜索范围和验收不明，先收敛真实缺口；不能仅因缺少形式变更记录阻塞。"
+    },
+    {
+      "id": "batch-defer-small-copy",
+      "category": "batch-review",
+      "input": "把首页标题文案从“欢迎”改成“你好”，其他行为不变。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "deferred": true
+      },
+      "rationale": "明确 R0 文案小改由当前会话直接执行并进入待复查队列，不派遣子代理，也不单独触发审查。"
+    },
+    {
+      "id": "batch-no-defer-permission",
+      "category": "batch-review",
+      "input": "把用户最低权限等级从 2 改成 3；上下文没有说明各等级能访问什么数据，也没有说明对现有用户的兼容要求。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R2",
+        "primary_skill": "product-spec-builder",
+        "question_min": 1,
+        "question_max": 2,
+        "escalation": true,
+        "status": "needs-input",
+        "deferred": false
+      },
+      "rationale": "权限边界变化必须升级为产品变更并即时验证，绝不能进入批处理待复查队列。"
+    },
+    {
+      "id": "risk-phase-css",
+      "category": "risk-calibration",
+      "input": "当前 Phase 12 只剩三处页面间距统一；已确认设计值，不变交互、布局断点或权限，可针对性截图验证。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "phase",
+        "max_new_reviewers": 0
+      },
+      "rationale": "Phase 身份和文件数不抬高风险；沿用现有 Phase 完成局部验证。"
+    },
+    {
+      "id": "risk-one-line-tenant",
+      "category": "risk-calibration",
+      "input": "已确认安全修复：恢复查询中被删除的一行 tenant_id 条件，防止跨租户读取；受影响调用方与失败回归已定位。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "bug-fixer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "deferred": false,
+        "max_new_reviewers": 1
+      },
+      "rationale": "一行修复涉及数据隔离，按实际后果 R2 即时核验。"
+    },
+    {
+      "id": "risk-tool-gap",
+      "category": "risk-calibration",
+      "input": "恢复一个按钮既定颜色，DOM 和样式可检查，但当前宿主不提供截图工具。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0
+      },
+      "rationale": "工具不可用单列视觉证据缺口，不把局部颜色修复自动升 R2。"
+    },
+    {
+      "id": "plan-dependent-deliverables",
+      "category": "plan-sizing",
+      "input": "给公开静态资料页增加三个分别验收的阶段：先构建本地索引，再接检索界面，最后集成键盘导航；后一步依赖前一步产物，无敏感数据或运行后端变化。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R1",
+        "primary_skill": "dev-planner",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "phase"
+      },
+      "rationale": "多个有依赖交付必须建立稳定 Phase ID 和所需前置成果。"
+    },
+    {
+      "id": "plan-short-product",
+      "category": "plan-sizing",
+      "input": "增加一个已定义的列表紧凑显示选项，仅改变本地 UI，沿用现有设置存储，兼容默认值且易回滚，单次任务可验收。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "task",
+        "deferred": false,
+        "max_new_reviewers": 0
+      },
+      "rationale": "小型产品变更保留需求和短任务，不塞维护队列也不强制 Phase。"
+    },
+    {
+      "id": "docs-new-decision-no-record",
+      "category": "docs-lifecycle",
+      "input": "旧 Spec 暂不支持降序。我现在确认增加现有列表的降序切换，默认顺序不变，空列表行为不变，只在内存排序。请直接实施并记录；尚无 CHANGE 文件。",
+      "expected": {
+        "route": "产品变更",
+        "risk": "R1",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "plan_kind": "task",
+        "doc_action": "update-current"
+      },
+      "rationale": "当前用户决定足够具体，先原位修订旧限制再执行，不要求补访谈。"
+    },
+    {
+      "id": "docs-code-is-regression",
+      "category": "docs-lifecycle",
+      "input": "用户有效决定和测试都要求日期倒序，代码最近错误变为正序。请恢复，同时整理现状文档。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "bug-fixer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "doc_action": "update-current"
+      },
+      "rationale": "代码证明现状，不推翻有效预期；修复回归后更新现状。"
+    },
+    {
+      "id": "docs-reuse-manual",
+      "category": "docs-lifecycle",
+      "input": "为已有项目补充当前架构入口；docs/MANUAL.md 已覆盖模块、启动和验证，只缺刚新增的索引模块说明，现有 docs/README.md 链接到它。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "doc_action": "reuse"
+      },
+      "rationale": "复用等价入口并原位更新，不另建重复手册。"
+    },
+    {
+      "id": "docs-long-line-split",
+      "category": "docs-lifecycle",
+      "input": "docs/DEV-PLAN.md 有 90 行但 60 KiB，其中大表单行超过一千字符；请整理并保留所有 Phase ID、任务和证据。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-planner",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "doc_action": "migrate"
+      },
+      "rationale": "按职责与字节/长行/重复负担拆分，不能以行数少证明不膨胀。"
+    },
+    {
+      "id": "review-new-evidence-third",
+      "category": "review-convergence",
+      "input": "一个 R2 修复已经有首审和两次复核，现在最终问题已实质修复，失败回归转绿且产生新 diff；继续复核在原授权和剩余预算内。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R2",
+        "primary_skill": "reviewer",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 1
+      },
+      "rationale": "存在新修复证据即可聚焦复核，不被旧两轮规则永久卡住。"
+    },
+    {
+      "id": "evolution-user-reserves-trials",
+      "category": "evolution",
+      "input": "我授权优化工作流和本地脚本验证，真实项目任务与跨模型试跑由我后续测试；本轮别运行那些任务。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R1",
+        "primary_skill": "skill-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0
+      },
+      "rationale": "明确优化请求无需积累三次信号或再次批准；保留用户测试边界。"
+    },
+    {
+      "id": "batch-close-partial",
+      "category": "batch-review",
+      "input": "已授权的批量审查结束：B-01、B-02 通过且证据仍适用，B-03 还有问题；已有审查报告含覆盖 ID 与证据。请收尾。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0,
+        "batch_action": "prune-closed"
+      },
+      "rationale": "同次收尾移出已关闭项，保留 B-03，复用报告而非追加已复查历史。"
+    },
+    {
+      "id": "batch-close-all",
+      "category": "batch-review",
+      "input": "本批全部条目已复查通过，基线未变，审查报告可追溯所有明细。请完成收尾；无其他待复查项。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0,
+        "batch_action": "reset-empty"
+      },
+      "rationale": "重置 batch.md 为无待复查项和最近回执链接，不累计历史；重复执行无新回执。"
+    },
+    {
+      "id": "batch-preserve-new-work",
+      "category": "batch-review",
+      "input": "reviewer 只覆盖审查开始时的 B-01 旧 diff；之后 B-01 被另一任务实质修改，另新增 B-02。旧 diff 审查通过，现在收尾。",
+      "expected": {
+        "route": "维护执行",
+        "risk": "R0",
+        "primary_skill": "dev-builder",
+        "question_min": 0,
+        "question_max": 0,
+        "escalation": false,
+        "status": "continue",
+        "max_new_reviewers": 0,
+        "batch_action": "retain-open"
+      },
+      "rationale": "重读队列后保留变更和新增项；旧审查不能覆盖新内容，也不能整文件清空。"
+    }
+  ]
+}

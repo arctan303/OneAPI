@@ -1,0 +1,5 @@
+ADMIN_API_KEY=mock-admin-key-for-tests-only-00000001
+GATEWAY_API_KEY=mock-gateway-key-for-tests-only-0001
+TOKEN_ENCRYPTION_KEY=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=
+MOCK_UPSTREAM=true
+ALLOW_TEST_HOSTS=true

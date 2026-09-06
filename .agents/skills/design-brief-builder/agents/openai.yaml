@@ -1,0 +1,4 @@
+interface:
+  display_name: "02 设计规范"
+  short_description: "为产品路线把审美词和使用场景转成可验证、可访问的设计规范；视觉维护不触发。"
+  default_prompt: "使用 $design-brief-builder 为 0→1 产品或产品变更生成或更新 docs/Design-Brief.md。"

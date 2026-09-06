@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OneAPI · 管理后台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23176b52'/%3E%3Cpath d='M9 16h14M16 9v14' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">LOCAL ADMIN</p>
+      <h1>个人 Codex 网关</h1>
+      <p class="lede">连接 Codex、测试模型，并为第三方应用创建独立 API 密钥。</p>
+    </header>
+
+    <section id="login-panel" aria-labelledby="login-title">
+      <div class="section-head">
+        <div><span class="step">登录</span><h2 id="login-title">管理员后台</h2></div>
+      </div>
+      <form id="login-form">
+        <label>管理员口令
+          <input id="admin-password" type="password" autocomplete="current-password" required autofocus>
+        </label>
+        <div class="actions"><button type="submit">登录</button></div>
+      </form>
+      <p id="login-message" class="message" aria-live="polite"></p>
+    </section>
+
+    <div id="console" class="hidden">
+      <section class="session-bar" aria-label="后台登录">
+        <div>
+          <strong>管理员后台</strong>
+          <p id="session-expiry" class="muted"></p>
+          <p id="session-message" class="message" aria-live="polite"></p>
+        </div>
+        <button id="logout-button" class="secondary" type="button">退出后台</button>
+      </section>
+
+      <section aria-labelledby="account-title">
+        <div class="section-head">
+          <div><span class="step">01</span><h2 id="account-title">Codex 连接</h2></div>
+          <span id="account-badge" class="badge">未检查</span>
+        </div>
+        <div class="actions">
+          <button id="status-button" class="secondary" type="button">检查状态</button>
+          <button id="connect-button" type="button">连接 Codex</button>
+          <button id="disconnect-button" class="danger" type="button">断开 Codex</button>
+        </div>
+        <div id="device-panel" class="device hidden" aria-live="polite">
+          <p>打开官方页面并输入这次的一次性代码：</p>
+          <a id="verification-link" target="_blank" rel="noopener noreferrer"></a>
+          <code id="user-code"></code>
+          <p id="device-login-status" class="muted"></p>
+          <button id="cancel-login-button" class="secondary" type="button">取消此次连接</button>
+        </div>
+        <p id="account-message" class="message" aria-live="polite"></p>
+        <p class="muted">“断开 Codex”会清除本地保存的 Codex 连接；不会退出管理员后台，也不会撤销 API 密钥。</p>
+      </section>
+
+      <section aria-labelledby="test-title">
+        <div class="section-head">
+          <div><span class="step">02</span><h2 id="test-title">模型测试</h2></div>
+          <span id="call-badge" class="badge">尚未测试</span>
+        </div>
+        <div class="model-row">
+          <label>模型 ID<input id="model" list="models" placeholder="加载目录或手动输入"></label>
+          <datalist id="models"></datalist>
+          <button id="models-button" class="secondary" type="button">加载模型</button>
+        </div>
+        <p id="models-message" class="message" role="status"></p>
+        <label>消息<textarea id="prompt" rows="4" placeholder="例如：只回复“连接正常”"></textarea></label>
+        <div class="actions">
+          <button id="send-button" type="button">发送流式请求</button>
+          <button id="stop-button" class="secondary" type="button" disabled>停止</button>
+          <button id="clear-button" class="secondary" type="button">清空上下文</button>
+        </div>
+        <pre id="transcript" aria-live="polite"></pre>
+        <p class="muted">这里直接使用当前后台登录进行测试，无需先创建 API 密钥。</p>
+      </section>
+
+      <section aria-labelledby="keys-title">
+        <div class="section-head">
+          <div><span class="step">03</span><h2 id="keys-title">API 密钥</h2></div>
+        </div>
+        <form id="api-key-form">
+          <label>密钥名称<input id="api-key-name" maxlength="64" required placeholder="例如：桌面客户端"></label>
+          <div class="actions"><button type="submit">创建 API 密钥</button></div>
+        </form>
+        <div id="created-key-panel" class="secret-panel hidden" role="status">
+          <strong>请立即复制。这是唯一一次显示完整密钥。</strong>
+          <code id="created-key"></code>
+          <div class="actions">
+            <button id="copy-key-button" type="button">复制密钥</button>
+            <button id="dismiss-key-button" class="secondary" type="button">已保存，隐藏</button>
+          </div>
+        </div>
+        <p>Base URL</p>
+        <div class="copy-row">
+          <code id="base-url"></code>
+          <button id="copy-base-url-button" class="secondary" type="button">复制 Base URL</button>
+        </div>
+        <p id="base-url-message" class="message" aria-live="polite"></p>
+        <div id="api-key-list" class="key-list" aria-live="polite"></div>
+        <p id="api-key-message" class="message" aria-live="polite"></p>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

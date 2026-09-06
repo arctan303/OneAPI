@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜Bug 修复"
+  short_description: "在维护路线中用证据定位并恢复既定行为，契约不清时升级为产品变更。"
+  default_prompt: "使用 $bug-fixer 建立维护任务契约，复现并修复当前缺陷；正确行为不清时停止修改并升级为产品变更。"

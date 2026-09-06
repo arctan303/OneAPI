@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜技能构建"
+  short_description: "按统一 Prompt 契约创建或维护带触发边界、阶段契约和行为用例的 Skill。"
+  default_prompt: "使用 $skill-builder 创建或重构 Skill，并同步阶段契约、YAML、正反例和 Prompt 行为用例。"

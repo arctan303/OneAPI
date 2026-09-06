@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "oneapi-codex-gateway-mock",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-06",
+  "dev": {
+    "ip": "127.0.0.1",
+    "port": 8790,
+    "local_protocol": "http"
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACCOUNT", "class_name": "AccountDurableObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AccountDurableObject"] }
+  ],
+  "vars": {
+    "ADMIN_API_KEY": "mock-admin-key-for-tests-only-00000001",
+    "GATEWAY_API_KEY": "mock-gateway-key-for-tests-only-0001",
+    "TOKEN_ENCRYPTION_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "MOCK_UPSTREAM": "true",
+    "ALLOW_TEST_HOSTS": "true"
+  },
+  "env": {
+    "test": {
+      "durable_objects": {
+        "bindings": [
+          { "name": "ACCOUNT", "class_name": "AccountDurableObject" }
+        ]
+      },
+      "vars": {
+        "ADMIN_API_KEY": "mock-admin-key-for-tests-only-00000001",
+        "GATEWAY_API_KEY": "mock-gateway-key-for-tests-only-0001",
+        "TOKEN_ENCRYPTION_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "MOCK_UPSTREAM": "true",
+        "ALLOW_TEST_HOSTS": "true"
+      }
+    }
+  }
+}

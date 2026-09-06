@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜构建发布"
+  short_description: "识别项目生态，执行原生构建打包、产物冒烟、敏感信息审计与发布准备。"
+  default_prompt: "使用 $release-builder 识别当前项目生态，构建最终产物并完成发布前审计与冒烟验证。"

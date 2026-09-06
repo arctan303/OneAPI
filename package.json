@@ -1,0 +1,29 @@
+{
+  "name": "oneapi-codex-gateway-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "wrangler dev --config wrangler.jsonc",
+    "dev:node": "node scripts/dev-local.mjs",
+    "test:dev-node": "node scripts/verify-dev-local.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:sdk": "node scripts/sdk-compat.mjs",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "smoke:live": "node scripts/live-session-smoke.mjs"
+  },
+  "dependencies": {
+    "openai": "7.10.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.4",
+    "@cloudflare/workers-types": "5.20260906.1",
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260903.0-alpha",
+    "typescript": "7.0.2",
+    "vitest": "4.1.0",
+    "wrangler": "4.129.0"
+  }
+}

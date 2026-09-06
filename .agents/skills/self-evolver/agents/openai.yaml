@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜自进化"
+  short_description: "采集真实失败信号，达到阈值后用最小补丁和行为回归优化规则。"
+  default_prompt: "使用 $self-evolver 合并信号，仅处理达到阈值的规则缺陷，并为每个补丁绑定 Prompt 回归用例。"

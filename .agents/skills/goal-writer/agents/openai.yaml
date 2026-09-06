@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜目标生成"
+  short_description: "将长期任务转成有边界、可恢复、可验证且会停止的 Goal。"
+  default_prompt: "使用 $goal-writer 将长期任务写成有验收证据、重试上限、中断检查点和授权边界的 Goal。"

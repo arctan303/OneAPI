@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "oneapi-codex-gateway-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-06",
+  "dev": {
+    "ip": "127.0.0.1",
+    "port": 8787,
+    "local_protocol": "http"
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACCOUNT", "class_name": "AccountDurableObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AccountDurableObject"] }
+  ],
+  "secrets": {
+    "required": ["ADMIN_API_KEY", "GATEWAY_API_KEY", "TOKEN_ENCRYPTION_KEY"]
+  }
+}

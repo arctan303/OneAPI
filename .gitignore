@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.dev.vars
+.env
+.wrangler/
+.sdk-compat/
+*.log
+coverage/
+
+.playwright-cli/
+output/playwright/
+
+# Local runtime, diagnostics and machine settings
+output/
+.tmp-dev-local-*/
+.codex/config.toml
+**/__pycache__/
+*.pyc
+.env.*
+!.env.example
+.dev.vars.*
+!.dev.vars.example
+!.dev.vars.test

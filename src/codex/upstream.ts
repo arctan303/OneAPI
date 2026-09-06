@@ -1,0 +1,250 @@
+import { GatewayError, upstreamError } from "../errors";
+import type { StoredCredentials } from "../types";
+import type { OutboundFetch } from "./auth";
+import { CLIENT_VERSION, CODEX_BASE_URL, CODEX_ORIGINATOR, CODEX_USER_AGENT } from "./constants";
+
+async function rejectRedirect(response: Response, operation: string): Promise<void> {
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel("redirect response body is not retained").catch(() => undefined);
+    throw new GatewayError(
+      502,
+      "upstream_redirect_rejected",
+      `${operation} 尝试重定向；为防止凭据跨域外带，网关已拒绝该响应。`
+    );
+  }
+}
+
+function safeDiagnosticToken(value: unknown): string {
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,100}$/.test(value) ? value : "";
+}
+
+function safeHeaderText(value: string | null): string {
+  return (value ?? "").replace(/[^\x20-\x7E]/g, "?").slice(0, 100);
+}
+
+interface BoundedText {
+  text: string;
+  truncated: boolean;
+}
+
+async function readBoundedText(response: Response): Promise<BoundedText> {
+  if (!response.body) return { text: "", truncated: false };
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const maxBytes = 64 * 1024;
+  let truncated = false;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      const remaining = maxBytes - size;
+      if (next.value.byteLength > remaining) {
+        if (remaining > 0) {
+          chunks.push(next.value.slice(0, remaining));
+          size += remaining;
+        }
+        truncated = true;
+        await reader.cancel("upstream error body exceeded diagnostic limit");
+        break;
+      }
+      chunks.push(next.value);
+      size += next.value.byteLength;
+    }
+  } catch {
+    await reader.cancel("upstream error body read failed").catch(() => undefined);
+    return { text: "", truncated: true };
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: new TextDecoder("utf-8").decode(bytes), truncated };
+}
+
+export async function readBoundedErrorCode(response: Response): Promise<string> {
+  const body = await readBoundedText(response);
+  if (body.truncated) return "";
+  try {
+    const value = JSON.parse(body.text) as { error?: { code?: unknown } };
+    return safeDiagnosticToken(value.error?.code).toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function redactedHtmlTitle(html: string): string {
+  const match = html.match(/<title(?:\s[^>]*)?>([\s\S]{0,2048}?)<\/title>/i);
+  if (!match) return "";
+  const normalized = match[1]!
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (normalized.startsWith("just a moment")) return "Just a moment...";
+  if (normalized.includes("attention required") && normalized.includes("cloudflare")) return "Attention Required! | Cloudflare";
+  if (normalized.includes("access denied")) return "Access denied";
+  if (normalized === "forbidden" || normalized.startsWith("403 forbidden")) return "Forbidden";
+  if (normalized === "error" || normalized.startsWith("server error")) return "Error";
+  return "[redacted]";
+}
+
+function htmlErrorCategory(title: string, server: string, cfRay: string, cfMitigated: string): string {
+  const hasCloudflareSignal = server.toLowerCase().includes("cloudflare") || Boolean(cfRay) || Boolean(cfMitigated);
+  if (cfMitigated.toLowerCase() === "challenge") return "cloudflare_challenge";
+  if (title === "Attention Required! | Cloudflare") return hasCloudflareSignal ? "cloudflare_attention_required" : "html_attention_required";
+  if (title === "Just a moment...") return hasCloudflareSignal ? "cloudflare_interstitial" : "html_interstitial";
+  if (title === "Access denied" || title === "Forbidden") {
+    return hasCloudflareSignal ? "cloudflare_access_denied" : "html_access_denied";
+  }
+  return hasCloudflareSignal ? "cloudflare_html_error" : "unclassified_html_error";
+}
+
+export interface UpstreamDiagnostic {
+  event: "codex_upstream_rejected";
+  upstreamHostname: string;
+  upstreamPath: string;
+  status: number;
+  contentType: string;
+  server?: string;
+  cfRay?: string;
+  cfMitigated?: string;
+  upstreamRequestId?: string;
+  htmlTitle?: string;
+  errorCategory: string;
+  bodyTruncated?: true;
+}
+
+export async function collectUpstreamDiagnostic(response: Response, targetUrl: string): Promise<UpstreamDiagnostic> {
+  const target = new URL(targetUrl);
+  const contentType = safeHeaderText(response.headers.get("content-type"));
+  const server = safeHeaderText(response.headers.get("server"));
+  const cfRay = safeDiagnosticToken(response.headers.get("cf-ray"));
+  const cfMitigated = safeDiagnosticToken(response.headers.get("cf-mitigated"));
+  const upstreamRequestId = safeDiagnosticToken(
+    response.headers.get("x-request-id") ?? response.headers.get("openai-request-id") ?? response.headers.get("cf-request-id")
+  );
+  let htmlTitle = "";
+  let errorCategory = "unclassified_http_error";
+  let bodyTruncated = false;
+  if (contentType.toLowerCase().includes("json")) {
+    const body = await readBoundedText(response);
+    bodyTruncated = body.truncated;
+    if (!body.truncated) {
+      try {
+        const value = JSON.parse(body.text) as { error?: unknown };
+        if (value && typeof value === "object" && value.error && typeof value.error === "object") {
+          errorCategory = "structured_json_error";
+        }
+      } catch {
+        // Invalid JSON remains an unclassified transport error.
+      }
+    }
+    if (errorCategory !== "structured_json_error") errorCategory = "unclassified_json_error";
+  } else if (contentType.toLowerCase().includes("html")) {
+    const body = await readBoundedText(response);
+    bodyTruncated = body.truncated;
+    htmlTitle = redactedHtmlTitle(body.text);
+    errorCategory = htmlErrorCategory(htmlTitle, server, cfRay, cfMitigated);
+  } else {
+    await response.body?.cancel("non-JSON upstream error body is not retained").catch(() => undefined);
+  }
+  return {
+    event: "codex_upstream_rejected",
+    upstreamHostname: target.hostname,
+    upstreamPath: target.pathname,
+    status: response.status,
+    contentType,
+    ...(server ? { server } : {}),
+    ...(cfRay ? { cfRay } : {}),
+    ...(cfMitigated ? { cfMitigated } : {}),
+    ...(upstreamRequestId ? { upstreamRequestId } : {}),
+    ...(htmlTitle ? { htmlTitle } : {}),
+    errorCategory,
+    ...(bodyTruncated ? { bodyTruncated: true as const } : {})
+  };
+}
+
+async function throwUpstreamFailure(response: Response, targetUrl: string, fallback: string): Promise<never> {
+  const diagnostic = await collectUpstreamDiagnostic(response, targetUrl);
+  console.warn(JSON.stringify(diagnostic));
+  if (response.status === 403 && diagnostic.errorCategory === "cloudflare_challenge") {
+    throw new GatewayError(
+      403,
+      "upstream_edge_challenge",
+      "Codex 上游的 Cloudflare 校验拒绝了当前本地运行时请求。",
+      undefined,
+      "server_error"
+    );
+  }
+  throw upstreamError(response.status, fallback);
+}
+
+export function generationAbortError(signal: AbortSignal): GatewayError {
+  const message = signal.reason instanceof Error ? signal.reason.message : "";
+  if (message === "generation timeout") {
+    return new GatewayError(504, "generation_timeout", "生成请求超过本地 5 分钟时限。", undefined, "timeout_error");
+  }
+  if (message === "account disconnected") {
+    return new GatewayError(503, "account_disconnected", "账户已在请求期间断开。", undefined, "authentication_error");
+  }
+  return new GatewayError(499, "request_cancelled", "生成请求已取消。", undefined, "request_error");
+}
+
+function headers(credentials: StoredCredentials, accept: string): Headers {
+  return new Headers({
+    Authorization: `Bearer ${credentials.accessToken}`,
+    "ChatGPT-Account-ID": credentials.accountId,
+    Accept: accept,
+    "Content-Type": "application/json",
+    originator: CODEX_ORIGINATOR,
+    "User-Agent": CODEX_USER_AGENT,
+    version: CLIENT_VERSION
+  });
+}
+
+export async function fetchModels(fetcher: OutboundFetch, credentials: StoredCredentials): Promise<Response> {
+  const targetUrl = `${CODEX_BASE_URL}/models?client_version=${encodeURIComponent(CLIENT_VERSION)}`;
+  const response = await fetcher(new Request(targetUrl, {
+    method: "GET",
+    headers: headers(credentials, "application/json"),
+    redirect: "manual"
+  }));
+  await rejectRedirect(response, "模型列表请求");
+  if (!response.ok) await throwUpstreamFailure(response, targetUrl, "模型目录请求失败");
+  return response;
+}
+
+export async function fetchResponseStream(
+  fetcher: OutboundFetch,
+  credentials: StoredCredentials,
+  body: Record<string, unknown>,
+  signal: AbortSignal
+): Promise<Response> {
+  const targetUrl = `${CODEX_BASE_URL}/responses`;
+  let response: Response;
+  try {
+    response = await fetcher(new Request(targetUrl, {
+      method: "POST",
+      headers: headers(credentials, "text/event-stream"),
+      body: JSON.stringify(body),
+      signal,
+      redirect: "manual"
+    }));
+  } catch {
+    if (signal.aborted) throw generationAbortError(signal);
+    throw new GatewayError(502, "upstream_network_error", "无法连接 Codex 生成服务。", undefined, "server_error");
+  }
+  await rejectRedirect(response, "响应生成请求");
+  if (!response.ok) await throwUpstreamFailure(response, targetUrl, "生成请求失败");
+  if (!response.body) throw new GatewayError(502, "upstream_stream_missing", "上游成功响应没有响应流。", undefined, "server_error");
+  return response;
+}

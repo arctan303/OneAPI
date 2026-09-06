@@ -1,0 +1,4 @@
+interface:
+  display_name: "01 需求收集"
+  short_description: "定义 0→1 产品或补齐不充分的产品变更，明确外部行为、边界与验收标准。"
+  default_prompt: "使用 $product-spec-builder 定义新产品或补齐尚不可验收的产品变更；已有明确决定时按规模进入短任务开发或阶段计划。"

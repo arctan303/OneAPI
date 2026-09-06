@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "workflow": "creator.skill",
+  "version": "1.5.0",
+  "platform": "codex",
+  "skill_root": ".agents/skills",
+  "skill_count": 11,
+  "skills": [
+    "bug-fixer",
+    "design-brief-builder",
+    "design-maker",
+    "dev-builder",
+    "dev-planner",
+    "goal-writer",
+    "product-spec-builder",
+    "release-builder",
+    "reviewer",
+    "self-evolver",
+    "skill-builder"
+  ],
+  "docs_schema_version": 1,
+  "docs_guide": ".creator/references/docs-migration-1.5.md"
+}

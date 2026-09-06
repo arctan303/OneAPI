@@ -1,0 +1,4 @@
+interface:
+  display_name: "04 项目开发"
+  short_description: "依据产品计划或维护任务契约实施变更，并按 R0/R1/R2 提供验证与审查。"
+  default_prompt: "使用 $dev-builder 识别产品或维护路线，按对应契约实施变更并完成风险分级验证。"

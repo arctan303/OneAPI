@@ -1,0 +1,4 @@
+interface:
+  display_name: "可选｜设计制图"
+  short_description: "为产品路线基于需求与规范生成 UI 原型、组件和关键状态；视觉维护不触发。"
+  default_prompt: "按需使用 $design-maker 为 0→1 产品或产品变更生成设计稿或交互原型。"
