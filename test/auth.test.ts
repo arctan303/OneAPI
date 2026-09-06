@@ -226,9 +226,10 @@ describe("AUTH-001 administrator session and API keys", () => {
 
     const listed = await SELF.fetch(`${origin}/admin/api-keys`, { headers: { Cookie: cookie! } });
     const listBody = await listed.json() as { data: Array<Record<string, unknown>> };
-    expect(listBody.data).toHaveLength(1);
-    expect(listBody.data[0]).toMatchObject({ id: created.id, name: "desktop SDK" });
-    expect(listBody.data[0]).not.toHaveProperty("key");
+    const createdEntry = listBody.data.find((entry) => entry.id === created.id);
+    expect(listBody.data.find((entry) => entry.id === "legacy")).toBeTruthy();
+    expect(createdEntry).toMatchObject({ id: created.id, name: "desktop SDK" });
+    expect(createdEntry).not.toHaveProperty("key");
     expect(JSON.stringify(listBody)).not.toContain(created.key);
     await runInDurableObject(accountStub(), async (_instance, state) => {
       const stored = await state.storage.get<StoredApiKey[]>("api-keys");

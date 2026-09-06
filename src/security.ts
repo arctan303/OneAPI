@@ -141,3 +141,17 @@ export function accountIdFromIdToken(idToken: string): string | null {
   const direct = payload?.chatgpt_account_id;
   return typeof direct === "string" && direct.length > 0 ? direct : null;
 }
+
+export function accountInfoFromIdToken(idToken: string): { email: string | null; plan: string | null } {
+  const payload = decodeJwtPayload(idToken) ?? {};
+  const namespaced = payload["https://api.openai.com/auth"];
+  const auth = namespaced && typeof namespaced === "object" && !Array.isArray(namespaced)
+    ? namespaced as Record<string, unknown>
+    : {};
+  const email = [payload.email, auth.email, auth.chatgpt_email].find((value) => typeof value === "string" && value.length > 0);
+  const plan = [auth.chatgpt_plan_type, payload.chatgpt_plan_type, payload.plan_type].find((value) => typeof value === "string" && value.length > 0);
+  return {
+    email: typeof email === "string" ? email : null,
+    plan: typeof plan === "string" ? plan : null
+  };
+}

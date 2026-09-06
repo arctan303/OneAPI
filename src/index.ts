@@ -1,9 +1,14 @@
 import { AccountDurableObject } from "./account";
 import { errorResponse, GatewayError } from "./errors";
-import { ADMIN_SESSION_COOKIE } from "./security";
+import { ADMIN_SESSION_COOKIE, timingSafeEqual } from "./security";
 import type { Env } from "./types";
 
 export { AccountDurableObject };
+
+const LOCAL_REQUEST_GROUP_HEADER = "X-OneAPI-Local-Request-Group";
+const LOCAL_BRIDGE_TOKEN_HEADER = "X-OneAPI-Local-Bridge-Token";
+const INTERNAL_CONTROL_ORIGIN = "https://oneapi.internal";
+const INTERNAL_GROUP_PATH = /^\/__internal\/request-groups\/(open|cancel|close)$/;
 
 function isLoopback(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
@@ -22,6 +27,15 @@ function hasAdminSessionCookie(request: Request): boolean {
   return (request.headers.get("Cookie") ?? "")
     .split(";")
     .some((part) => part.trim().startsWith(`${ADMIN_SESSION_COOKIE}=`));
+}
+
+function publicForwardRequest(request: Request, env: Env): Request {
+  const headers = new Headers(request.headers);
+  const bridgeToken = headers.get(LOCAL_BRIDGE_TOKEN_HEADER) ?? "";
+  const trustedBridge = timingSafeEqual(bridgeToken, env.TOKEN_ENCRYPTION_KEY);
+  headers.delete(LOCAL_BRIDGE_TOKEN_HEADER);
+  if (!trustedBridge) headers.delete(LOCAL_REQUEST_GROUP_HEADER);
+  return new Request(request, { headers });
 }
 
 function enforceAdminBrowserBoundary(request: Request, url: URL): void {
@@ -92,27 +106,35 @@ export default {
     const url = new URL(request.url);
     let response: Response;
     try {
-      if (env.ALLOW_TEST_HOSTS !== "true" && !isLoopback(url.hostname)) {
-        throw new GatewayError(403, "host_not_allowed", "本地 Demo 只接受 loopback Host。", undefined, "permission_error");
-      }
-      const protectedRoute = url.pathname.startsWith("/admin/") || url.pathname.startsWith("/v1/");
-      if (url.pathname.startsWith("/admin/")) {
-        enforceAdminBrowserBoundary(request, url);
-      }
-      if (request.method === "GET" && url.pathname === "/health") {
-        response = Response.json({
-          ok: true,
-          service: "oneapi-codex-gateway-demo",
-          ...(env.MOCK_UPSTREAM === "true" && env.MOCK_INSTANCE_NONCE ? { instanceNonce: env.MOCK_INSTANCE_NONCE } : {})
-        });
-      } else if (protectedRoute) {
+      const internalGroupControl = url.origin === INTERNAL_CONTROL_ORIGIN && INTERNAL_GROUP_PATH.test(url.pathname);
+      if (internalGroupControl) {
         const id = env.ACCOUNT.idFromName("primary");
         const stub = env.ACCOUNT.get(id);
-        response = bridgeStreamCancellation(await stub.fetch(request), stub, env.TOKEN_ENCRYPTION_KEY);
+        response = secureHeaders(await stub.fetch(request), true);
       } else {
-        response = await env.ASSETS.fetch(request);
+        if (env.ALLOW_TEST_HOSTS !== "true" && !isLoopback(url.hostname)) {
+          throw new GatewayError(403, "host_not_allowed", "本地 Demo 只接受 loopback Host。", undefined, "permission_error");
+        }
+        const protectedRoute = url.pathname.startsWith("/admin/") || url.pathname.startsWith("/v1/");
+        if (url.pathname.startsWith("/admin/")) {
+          enforceAdminBrowserBoundary(request, url);
+        }
+        const forwardedRequest = publicForwardRequest(request, env);
+        if (request.method === "GET" && url.pathname === "/health") {
+          response = Response.json({
+            ok: true,
+            service: "oneapi-codex-gateway-demo",
+            ...(env.MOCK_UPSTREAM === "true" && env.MOCK_INSTANCE_NONCE ? { instanceNonce: env.MOCK_INSTANCE_NONCE } : {})
+          });
+        } else if (protectedRoute) {
+          const id = env.ACCOUNT.idFromName("primary");
+          const stub = env.ACCOUNT.get(id);
+          response = bridgeStreamCancellation(await stub.fetch(forwardedRequest), stub, env.TOKEN_ENCRYPTION_KEY);
+        } else {
+          response = await env.ASSETS.fetch(forwardedRequest);
+        }
+        response = secureHeaders(response, protectedRoute);
       }
-      response = secureHeaders(response, protectedRoute);
     } catch (error) {
       response = secureHeaders(errorResponse(error, requestId), true);
     }

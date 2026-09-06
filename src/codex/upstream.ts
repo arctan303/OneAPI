@@ -211,6 +211,18 @@ function headers(credentials: StoredCredentials, accept: string): Headers {
   });
 }
 
+export async function fetchUsage(fetcher: OutboundFetch, credentials: StoredCredentials): Promise<Response> {
+  const targetUrl = "https://chatgpt.com/backend-api/wham/usage";
+  const response = await fetcher(new Request(targetUrl, {
+    method: "GET",
+    headers: headers(credentials, "application/json"),
+    redirect: "manual"
+  }));
+  await rejectRedirect(response, "额度请求");
+  if (!response.ok) await throwUpstreamFailure(response, targetUrl, "额度请求失败");
+  return response;
+}
+
 export async function fetchModels(fetcher: OutboundFetch, credentials: StoredCredentials): Promise<Response> {
   const targetUrl = `${CODEX_BASE_URL}/models?client_version=${encodeURIComponent(CLIENT_VERSION)}`;
   const response = await fetcher(new Request(targetUrl, {

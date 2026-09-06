@@ -95,13 +95,20 @@ function normalizeToolChoice(value: unknown, chat: boolean): string {
   throw new GatewayError(400, "unsupported_parameter", `${hint}无法映射到当前 Codex 后端；仅支持 auto、none、required。`, "tool_choice");
 }
 
-function normalizeReasoning(value: unknown): JsonObject | undefined {
+const reasoningEffortIdentifier = /^[a-z][a-z0-9_-]{0,31}$/;
+
+function normalizeReasoning(value: unknown, effortParam = "reasoning.effort"): JsonObject | undefined {
   if (value === undefined) return undefined;
   const reasoning = object(value, "reasoning");
   onlyKeys(reasoning, ["effort"], "reasoning");
-  const effort = requiredString(reasoning.effort, "reasoning.effort");
-  if (!["minimal", "low", "medium", "high", "xhigh"].includes(effort)) {
-    throw new GatewayError(400, "unsupported_parameter", "reasoning.effort 仅支持 minimal/low/medium/high/xhigh，且最终仍受所选模型能力约束。", "reasoning.effort");
+  const effort = requiredString(reasoning.effort, effortParam);
+  if (!reasoningEffortIdentifier.test(effort)) {
+    throw new GatewayError(
+      400,
+      "invalid_value",
+      `${effortParam} 必须是 1 到 32 位小写标识符（字母开头，仅含字母、数字、下划线或连字符）；实际可用档位仍由所选模型的官方目录能力约束。`,
+      effortParam
+    );
   }
   return { effort, summary: "auto" };
 }
@@ -249,7 +256,7 @@ export function normalizeChat(body: JsonObject): NormalizedRequest {
     includeUsage = optionalBoolean(options.include_usage, "stream_options.include_usage", false);
   }
   let reasoning: JsonObject | undefined;
-  if (body.reasoning_effort !== undefined) reasoning = normalizeReasoning({ effort: body.reasoning_effort });
+  if (body.reasoning_effort !== undefined) reasoning = normalizeReasoning({ effort: body.reasoning_effort }, "reasoning_effort");
   return {
     model,
     stream: optionalBoolean(body.stream, "stream", false),

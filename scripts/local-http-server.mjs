@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { Headers as MiniflareHeaders } from "miniflare";
 
 export const LOCAL_REQUEST_GROUP_HEADER = "X-OneAPI-Local-Request-Group";
+export const LOCAL_BRIDGE_TOKEN_HEADER = "X-OneAPI-Local-Bridge-Token";
 
 const LISTEN_HOST = "127.0.0.1";
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
@@ -17,7 +18,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade"
 ]);
 
-function requestHeaders(request, groupId, bodyLength, hasBodySemantics) {
+function requestHeaders(request, groupId, bridgeToken, bodyLength, hasBodySemantics) {
   const connectionHeaders = new Set(
     String(request.headers.connection ?? "")
       .split(",")
@@ -29,6 +30,7 @@ function requestHeaders(request, groupId, bodyLength, hasBodySemantics) {
     const normalizedName = name.toLowerCase();
     if (
       normalizedName === LOCAL_REQUEST_GROUP_HEADER.toLowerCase()
+      || normalizedName === LOCAL_BRIDGE_TOKEN_HEADER.toLowerCase()
       || normalizedName === "content-length"
       || HOP_BY_HOP_HEADERS.has(normalizedName)
       || connectionHeaders.has(normalizedName)
@@ -43,6 +45,7 @@ function requestHeaders(request, groupId, bodyLength, hasBodySemantics) {
     }
   }
   headers.set(LOCAL_REQUEST_GROUP_HEADER, groupId);
+  headers.set(LOCAL_BRIDGE_TOKEN_HEADER, bridgeToken);
   if (hasBodySemantics) headers.set("Content-Length", String(bodyLength));
   return headers;
 }
@@ -97,7 +100,7 @@ function readRequestBody(request) {
   });
 }
 
-function sendJsonError(response, status, code, message, param, type = "invalid_request_error") {
+function sendJsonError(response, status, code, message, param, type = "invalid_request_error", closeConnection = true) {
   const body = Buffer.from(JSON.stringify({
     error: {
       message,
@@ -112,7 +115,7 @@ function sendJsonError(response, status, code, message, param, type = "invalid_r
     "Content-Length": body.byteLength,
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
-    Connection: "close"
+    ...(closeConnection ? { Connection: "close" } : {})
   });
   response.end(body);
 }
@@ -158,19 +161,12 @@ function waitForDrainOrClose(response) {
   });
 }
 
-function callFinalizer(callback, groupId) {
-  try {
-    void Promise.resolve(callback(groupId)).catch(() => undefined);
-  } catch {
-    // Lifecycle cleanup is best-effort after the request has reached a terminal state.
-  }
-}
-
 function groupLifecycle(groupId, openGroup, cancelGroup, closeGroup) {
   let openAttempted = false;
   let opened = false;
-  let settled = false;
   let cancelRequested = false;
+  let cancelPromise;
+  let finalizePromise;
   let reader;
   let readerCancelled = false;
 
@@ -180,39 +176,36 @@ function groupLifecycle(groupId, openGroup, cancelGroup, closeGroup) {
     void reader.cancel("client disconnected").catch(() => undefined);
   };
   const cancelOpened = () => {
-    if (!opened || settled) return;
-    settled = true;
-    callFinalizer(cancelGroup, groupId);
+    if (!opened) return;
     cancelReader();
+    cancelPromise ??= Promise.resolve()
+      .then(() => cancelGroup(groupId))
+      .catch(() => undefined);
+  };
+  const finalize = () => {
+    if (!opened) return Promise.resolve();
+    finalizePromise ??= Promise.resolve(cancelPromise)
+      .then(() => closeGroup(groupId))
+      .catch(() => undefined);
+    return finalizePromise;
   };
 
   return {
     async open() {
-      if (openAttempted) return opened && !settled;
+      if (openAttempted) return opened && !cancelRequested;
       openAttempted = true;
-      let accepted;
-      try {
-        accepted = await openGroup(groupId);
-      } catch (error) {
-        opened = true;
-        cancelRequested = true;
-        cancelOpened();
-        throw error;
-      }
+      const accepted = await openGroup(groupId);
       if (accepted === false) return false;
       opened = true;
       if (cancelRequested) cancelOpened();
-      return !settled;
+      return !cancelRequested;
     },
     cancel() {
       cancelRequested = true;
       cancelOpened();
     },
-    close() {
-      if (!opened || settled) return;
-      settled = true;
-      callFinalizer(closeGroup, groupId);
-    },
+    close: finalize,
+    finalize,
     get requested() {
       return cancelRequested;
     },
@@ -253,12 +246,15 @@ async function pumpResponse(source, target, lifecycle) {
   }
 }
 
-export async function startLocalHttpServer({ runtime, port, openGroup, cancelGroup, closeGroup }) {
+export async function startLocalHttpServer({ runtime, port, bridgeToken, openGroup, cancelGroup, closeGroup }) {
   if (!runtime || typeof runtime.dispatchFetch !== "function") {
     throw new TypeError("runtime.dispatchFetch is required");
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new TypeError("port must be an integer between 0 and 65535");
+  }
+  if (typeof bridgeToken !== "string" || bridgeToken.length === 0) {
+    throw new TypeError("bridgeToken is required");
   }
   if (typeof openGroup !== "function" || typeof cancelGroup !== "function" || typeof closeGroup !== "function") {
     throw new TypeError("openGroup, cancelGroup and closeGroup are required");
@@ -273,6 +269,7 @@ export async function startLocalHttpServer({ runtime, port, openGroup, cancelGro
     });
 
     void (async () => {
+      try {
       const opened = await lifecycle.open();
       if (!opened) {
         if (!lifecycle.requested && !response.destroyed) {
@@ -282,7 +279,7 @@ export async function startLocalHttpServer({ runtime, port, openGroup, cancelGro
       }
       const collected = await readRequestBody(request);
       if (collected.oversized) {
-        sendJsonError(response, 413, "request_too_large", "请求体超过本地 1 MiB 限制。", "body");
+        sendJsonError(response, 413, "request_too_large", "请求体超过本地 1 MiB 限制。", "body", "invalid_request_error", false);
         lifecycle.close();
         return;
       }
@@ -295,7 +292,7 @@ export async function startLocalHttpServer({ runtime, port, openGroup, cancelGro
         lifecycle.close();
         return;
       }
-      const headers = requestHeaders(request, groupId, collected.body.byteLength, hasBodySemantics);
+      const headers = requestHeaders(request, groupId, bridgeToken, collected.body.byteLength, hasBodySemantics);
       const host = headers.get("host") ?? LISTEN_HOST;
       let targetUrl;
       try {
@@ -327,9 +324,13 @@ export async function startLocalHttpServer({ runtime, port, openGroup, cancelGro
       if (runtimeResponse.statusText) response.statusMessage = runtimeResponse.statusText;
       setResponseHeaders(response, runtimeResponse.headers);
       await pumpResponse(runtimeResponse, response, lifecycle);
-      if (response.writableEnded) lifecycle.close();
+      } catch (error) {
+        lifecycle.cancel();
+        throw error;
+      } finally {
+        await lifecycle.finalize();
+      }
     })().catch(() => {
-      lifecycle.cancel();
       if (response.destroyed) return;
       if (!response.headersSent) {
         sendJsonError(response, 502, "local_runtime_error", "本地运行时请求失败。", undefined, "server_error");

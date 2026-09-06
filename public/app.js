@@ -4,6 +4,11 @@ let pollTimer = null;
 let requestController = null;
 let conversation = [];
 let uiEpoch = 0;
+let accountRequestToken = 0;
+let modelRequestToken = 0;
+let logListRequestToken = 0;
+let logDetailRequestToken = 0;
+let modelCapabilities = new Map();
 
 function setMessage(id, text) { $(id).textContent = text; }
 function setBadge(id, text) { $(id).textContent = text; }
@@ -34,6 +39,10 @@ function showAuthenticated(expiresAt) {
 
 function showLogin(message = "") {
   uiEpoch += 1;
+  accountRequestToken += 1;
+  modelRequestToken += 1;
+  logListRequestToken += 1;
+  logDetailRequestToken += 1;
   clearTimeout(pollTimer);
   loginId = null;
   requestController?.abort();
@@ -44,8 +53,14 @@ function showLogin(message = "") {
   $("created-key").textContent = "";
   $("created-key-panel").classList.add("hidden");
   $("api-key-list").replaceChildren();
-  $("models").replaceChildren();
-  setMessage("models-message", "");
+  clearAccountOverview();
+  clearModels();
+  $("logs-list").replaceChildren();
+  $("log-detail-meta").replaceChildren();
+  $("log-detail-bodies").replaceChildren();
+  $("log-detail").classList.add("hidden");
+  $("logs-section").classList.add("hidden");
+  if ($("key-edit-dialog").open) $("key-edit-dialog").close();
   $("device-panel").classList.add("hidden");
   $("verification-link").removeAttribute("href");
   $("verification-link").textContent = "";
@@ -57,21 +72,6 @@ function showLogin(message = "") {
   $("login-panel").classList.remove("hidden");
   $("admin-password").value = "";
   setMessage("login-message", message);
-}
-
-async function restoreSession() {
-  const epoch = uiEpoch;
-  $("base-url").textContent = `${location.origin}/v1`;
-  try {
-    const session = await (await api("/admin/session")).json();
-    if (epoch !== uiEpoch) return;
-    if (!session.authenticated) return showLogin();
-    showAuthenticated(session.expiresAt);
-    await Promise.all([checkStatus(), loadApiKeys()]);
-  } catch (error) {
-    if (epoch !== uiEpoch) return;
-    showLogin(error.message);
-  }
 }
 
 async function login(event) {
@@ -87,7 +87,7 @@ async function login(event) {
     if (epoch !== uiEpoch) return;
     $("admin-password").value = "";
     showAuthenticated(session.expiresAt);
-    await Promise.all([checkStatus(), loadApiKeys()]);
+    await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings()]);
   } catch (error) {
     if (epoch !== uiEpoch) return;
     $("admin-password").value = "";
@@ -114,20 +114,6 @@ async function adminCall(path, init = {}) {
   } catch (error) {
     if (error.status === 401 && requestEpoch === uiEpoch) showLogin("登录已失效，请重新登录。");
     throw error;
-  }
-}
-
-async function checkStatus() {
-  const epoch = uiEpoch;
-  try {
-    const body = await (await adminCall("/admin/status")).json();
-    if (epoch !== uiEpoch) return;
-    setBadge("account-badge", body.connected ? "已连接" : body.reauthenticationRequired ? "需要重新连接" : "未连接");
-    setMessage("account-message", body.connected ? `账户 ${body.account.idHint} 已保存。` : "当前没有可用的 Codex 连接。");
-    if (body.login?.status === "pending") showDeviceLogin(body.login);
-  } catch (error) {
-    if (epoch !== uiEpoch) return;
-    setMessage("account-message", error.message);
   }
 }
 
@@ -218,10 +204,14 @@ async function disconnectCodex() {
   try {
     await adminCall("/admin/disconnect", { method: "POST", body: "{}" });
     if (epoch !== uiEpoch) return;
+    accountRequestToken += 1;
+    modelRequestToken += 1;
     loginId = null;
     clearTimeout(pollTimer);
     conversation = [];
     $("device-panel").classList.add("hidden");
+    clearAccountOverview();
+    clearModels();
     setBadge("account-badge", "未连接");
     setBadge("call-badge", "尚未测试");
     setMessage("account-message", "Codex 连接和本地账户凭据已清除。后台登录和 API 密钥未改变。");
@@ -233,22 +223,26 @@ async function disconnectCodex() {
 
 async function loadModels() {
   const epoch = uiEpoch;
+  const requestToken = ++modelRequestToken;
   setMessage("models-message", "正在读取账户模型目录…");
   try {
     const body = await (await adminCall("/admin/test/models")).json();
-    if (epoch !== uiEpoch) return;
+    if (epoch !== uiEpoch || requestToken !== modelRequestToken) return;
+    modelCapabilities = new Map(body.data.map((model) => [model.id, model.capabilities?.reasoning ?? null]));
     $("models").replaceChildren(...body.data.map((model) => {
       const option = document.createElement("option");
       option.value = model.id;
       return option;
     }));
     if (!value("model") && body.data[0]) $("model").value = body.data[0].id;
-    setMessage("models-message", body.data.length ? `账户目录返回 ${body.data.length} 个模型：${body.data.map(model => model.id).join("、")}` : "账户目录暂未返回可选模型。");
+    updateReasoningOptions();
+    setMessage("models-message", body.data.length ? `账户目录返回 ${body.data.length} 个模型：${body.data.map((model) => model.id).join("、")}` : "账户目录暂未返回可选模型。");
   } catch (error) {
-    if (epoch !== uiEpoch) return;
-    $("models").replaceChildren();
-    setMessage("models-message", "模型目录读取失败。");
-    $("transcript").textContent += `\n[模型目录] ${error.message}\n`;
+    if (epoch !== uiEpoch || requestToken !== modelRequestToken) return;
+    clearModels();
+    $("transcript").textContent += `
+[模型目录] ${error.message}
+`;
   }
 }
 
@@ -270,10 +264,13 @@ async function sendTest() {
   let answer = "";
   let completed = false;
   try {
+    const requestBody = { model, input: conversation, stream: true, store: false };
+    const effort = value("reasoning-effort");
+    if (effort) requestBody.reasoning = { effort };
     const response = await adminCall("/admin/test/responses", {
       method: "POST",
       signal: requestController.signal,
-      body: JSON.stringify({ model, input: conversation, stream: true, store: false })
+      body: JSON.stringify(requestBody)
     });
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -319,63 +316,6 @@ async function sendTest() {
   }
 }
 
-async function loadApiKeys() {
-  const epoch = uiEpoch;
-  try {
-    const body = await (await adminCall("/admin/api-keys")).json();
-    if (epoch !== uiEpoch) return;
-    const list = $("api-key-list");
-    list.replaceChildren();
-    if (body.data.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "muted";
-      empty.textContent = "还没有 API 密钥。";
-      list.append(empty);
-      return;
-    }
-    for (const key of body.data) {
-      const row = document.createElement("div");
-      row.className = "key-row";
-      const detail = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = key.name;
-      const metadata = document.createElement("span");
-      metadata.textContent = `${key.masked} · ${new Date(key.createdAt).toLocaleString()}`;
-      detail.append(name, metadata);
-      const revoke = document.createElement("button");
-      revoke.type = "button";
-      revoke.className = "danger";
-      revoke.textContent = "撤销";
-      revoke.addEventListener("click", () => revokeApiKey(key.id));
-      row.append(detail, revoke);
-      list.append(row);
-    }
-  } catch (error) {
-    if (epoch !== uiEpoch) return;
-    setMessage("api-key-message", error.message);
-  }
-}
-
-async function createApiKey(event) {
-  event.preventDefault();
-  const epoch = uiEpoch;
-  setMessage("api-key-message", "");
-  try {
-    const created = await (await adminCall("/admin/api-keys", {
-      method: "POST",
-      body: JSON.stringify({ name: value("api-key-name") })
-    })).json();
-    if (epoch !== uiEpoch) return;
-    $("api-key-name").value = "";
-    $("created-key").textContent = created.key;
-    $("created-key-panel").classList.remove("hidden");
-    await loadApiKeys();
-  } catch (error) {
-    if (epoch !== uiEpoch) return;
-    setMessage("api-key-message", error.message);
-  }
-}
-
 async function revokeApiKey(id) {
   const epoch = uiEpoch;
   try {
@@ -404,6 +344,8 @@ $("connect-button").addEventListener("click", startDeviceLogin);
 $("disconnect-button").addEventListener("click", disconnectCodex);
 $("cancel-login-button").addEventListener("click", cancelDeviceLogin);
 $("models-button").addEventListener("click", loadModels);
+$("model").addEventListener("input", updateReasoningOptions);
+$("model").addEventListener("change", updateReasoningOptions);
 $("send-button").addEventListener("click", sendTest);
 $("stop-button").addEventListener("click", () => requestController?.abort());
 $("clear-button").addEventListener("click", () => { conversation = []; $("transcript").textContent = ""; });
@@ -416,3 +358,390 @@ $("dismiss-key-button").addEventListener("click", () => {
 $("copy-base-url-button").addEventListener("click", () => copyText($("base-url").textContent, "base-url-message"));
 
 restoreSession();
+
+/* Phase-01 admin extensions */
+const fmtTime = (ms) => ms == null ? "未知" : new Date(ms).toLocaleString();
+const unknown = (v) => v == null || v === "" ? "未知" : String(v);
+const jsonBody = async (response) => response.json().catch(() => ({}));
+function parseList(text) { return String(text || "").split(/[\s,，]+/).map((s) => s.trim()).filter(Boolean); }
+function numericOrNull(id) { const raw = value(id); return raw === "" ? null : Number(raw); }
+function keyPayload(prefix = "") {
+  const all = $(`${prefix}key-models-all`).checked;
+  const models = all ? [] : parseList($( `${prefix}key-allowlist`).value);
+  return {
+    name: value(prefix ? "edit-key-name" : "api-key-name"),
+    expiresAt: $(`${prefix}key-expires`).value ? new Date($(`${prefix}key-expires`).value).getTime() : null,
+    modelAccess: { mode: all ? "all" : "allowlist", models },
+    rateLimitPerMinute: numericOrNull(`${prefix}key-rpm`),
+    concurrencyLimit: numericOrNull(`${prefix}key-concurrency`)
+  };
+}
+function setQuota(card, win) {
+  const remaining = card.querySelector("[data-quota-remaining]");
+  const meta = card.querySelector("[data-quota-meta]");
+  const reset = card.querySelector("[data-quota-reset]");
+  const status = card.querySelector("[data-quota-status]");
+  if (!win) { remaining.textContent = "未知"; meta.textContent = "未返回此额度窗口"; reset.textContent = "重置时间：未知"; status.textContent = "未知"; return; }
+  remaining.textContent = win.remainingPercent == null ? "未知" : `${win.remainingPercent}%`;
+  meta.textContent = win.usedPercent == null ? "已用：未知" : `已用 ${win.usedPercent}%`;
+  reset.textContent = `重置时间：${fmtTime(win.resetsAt)}`;
+  status.textContent = win.remainingPercent == null ? "未知" : "已获取";
+}
+function clearAccountOverview() {
+  $("account-email").textContent = "未知";
+  $("account-plan").textContent = "未知";
+  $("account-identity").textContent = "未知";
+  $("account-updated").textContent = "未知";
+  setQuota(document.querySelector('[data-window="5h"]'), null);
+  setQuota(document.querySelector('[data-window="7d"]'), null);
+  $("additional-quotas").replaceChildren();
+  setMessage("account-overview-message", "");
+}
+function setDefaultReasoningOption(label = "上游默认") {
+  const option = document.createElement("option");
+  option.value = "";
+  option.textContent = label;
+  $("reasoning-effort").replaceChildren(option);
+}
+function updateReasoningOptions() {
+  const modelId = value("model");
+  const previous = value("reasoning-effort");
+  if (!modelId || !modelCapabilities.has(modelId)) {
+    setDefaultReasoningOption();
+    setMessage("reasoning-message", modelId ? "未获取此模型的思考程度能力；将使用上游默认。" : "加载目录并选择模型后显示可用档位。");
+    return;
+  }
+  const reasoning = modelCapabilities.get(modelId);
+  const supported = reasoning?.supported_efforts;
+  if (!Array.isArray(supported)) {
+    setDefaultReasoningOption();
+    setMessage("reasoning-message", "模型目录未提供此模型的思考程度能力；将使用上游默认。");
+    return;
+  }
+  const efforts = [...new Set(supported.filter((effort) => typeof effort === "string" && effort.length > 0))];
+  const defaultEffort = typeof reasoning?.default_effort === "string" && efforts.includes(reasoning.default_effort)
+    ? reasoning.default_effort
+    : null;
+  setDefaultReasoningOption(defaultEffort ? `上游默认（${defaultEffort}）` : "上游默认");
+  for (const effort of efforts) {
+    const option = document.createElement("option");
+    option.value = effort;
+    option.textContent = effort;
+    $("reasoning-effort").append(option);
+  }
+  if (efforts.includes(previous)) $("reasoning-effort").value = previous;
+  setMessage("reasoning-message", efforts.length
+    ? `此模型支持：${efforts.join("、")}。${defaultEffort ? "上游默认是 " + defaultEffort + "。" : "默认档位由上游决定。"}`
+    : "模型目录明确未提供可选思考档位；将使用上游默认。");
+}
+function clearModels() {
+  modelCapabilities.clear();
+  $("models").replaceChildren();
+  $("model").value = "";
+  setDefaultReasoningOption();
+  $("reasoning-effort").value = "";
+  setMessage("models-message", "");
+  setMessage("reasoning-message", "");
+}
+
+async function loadAccountOverview(force = false, inheritedToken = null) {
+  const epoch = uiEpoch;
+  const requestToken = inheritedToken ?? ++accountRequestToken;
+  try {
+    const status = await (await adminCall("/admin/status")).json();
+    if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
+    const account = status.account;
+    $("account-email").textContent = unknown(account?.email);
+    $("account-plan").textContent = unknown(account?.plan);
+    $("account-identity").textContent = unknown(account?.id || account?.idHint);
+    $("account-updated").textContent = fmtTime(account?.lastRefreshAt);
+    const usage = await (await adminCall(`/admin/usage${force ? "?refresh=true" : ""}`)).json();
+    if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
+    setQuota(document.querySelector('[data-window="5h"]'), usage.windows?.fiveHour);
+    setQuota(document.querySelector('[data-window="7d"]'), usage.windows?.sevenDay);
+    const extra = $("additional-quotas");
+    extra.replaceChildren();
+    for (const win of usage.additional || []) {
+      const card = document.createElement("article"); card.className = "quota-card additional-quota";
+      const title = document.createElement("strong"); title.textContent = win.label || win.limitId || "其他窗口";
+      const amount = document.createElement("div"); amount.className = "quota-number"; amount.textContent = win.remainingPercent == null ? "未知" : `${win.remainingPercent}%`;
+      const detail = document.createElement("p"); detail.textContent = `已用：${win.usedPercent == null ? "未知" : win.usedPercent + "%"} · 重置：${fmtTime(win.resetsAt)}`;
+      card.append(title, amount, detail); extra.append(card);
+    }
+    setMessage("account-overview-message", usage.available === false ? (usage.error?.message || "额度暂时未获取，稍后可重试。") : `额度数据更新于 ${fmtTime(usage.fetchedAt)}`);
+  } catch (error) {
+    if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
+    setMessage("account-overview-message", "账户或额度读取失败：" + error.message);
+  }
+}
+async function checkStatus() {
+  const epoch = uiEpoch;
+  const requestToken = ++accountRequestToken;
+  try {
+    const body = await (await adminCall("/admin/status")).json();
+    if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
+    setBadge("account-badge", body.connected ? "已连接" : body.reauthenticationRequired ? "需要重新连接" : "未连接");
+    setMessage("account-message", body.connected ? `账户 ${body.account?.idHint || "已连接"} 已保存。` : "当前没有可用的 Codex 连接。");
+    if (body.login?.status === "pending") showDeviceLogin(body.login);
+    await loadAccountOverview(false, requestToken);
+  } catch (error) {
+    if (epoch === uiEpoch && requestToken === accountRequestToken) setMessage("account-message", error.message);
+  }
+}
+
+async function restoreSession() {
+  const epoch = uiEpoch; $("base-url").textContent = `${location.origin}/v1`;
+  try {
+    const session = await (await api("/admin/session")).json();
+    if (epoch !== uiEpoch) return;
+    if (!session.authenticated) return showLogin();
+    showAuthenticated(session.expiresAt);
+    await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings()]);
+  } catch (error) { if (epoch === uiEpoch) showLogin(error.message); }
+}
+function renderKey(key) {
+  const row = document.createElement("article"); row.className = "key-row";
+  const detail = document.createElement("div"); detail.className = "key-detail";
+  const name = document.createElement("strong"); name.textContent = key.name || "未命名 key";
+  const tag = document.createElement("span"); const expired = key.expiresAt != null && key.expiresAt <= Date.now(); tag.className = key.enabled === false || expired ? "key-state disabled-state" : "key-state"; tag.textContent = key.enabled === false ? "已停用" : expired ? "已过期" : "可用";
+  if (key.id === "legacy") { const legacy = document.createElement("span"); legacy.className = "legacy-tag"; legacy.textContent = "legacykey"; detail.append(name, legacy, tag); } else detail.append(name, tag);
+  const meta = document.createElement("span"); meta.textContent = `${key.masked || "无掩码"} · 创建于 ${key.createdAt ? fmtTime(key.createdAt) : "内置"} · 到期：${key.expiresAt == null ? "不过期" : fmtTime(key.expiresAt)}`;
+  const policy = document.createElement("span"); const access = key.modelAccess?.mode === "allowlist" ? `白名单：${(key.modelAccess.models || []).join(", ") || "未知"}` : "全部模型";
+  policy.textContent = `${access} · RPM：${key.rateLimitPerMinute ?? "不限制"} · 并发：${key.concurrencyLimit ?? "不限制"}`;
+  detail.append(meta, policy);
+  const actions = document.createElement("div"); actions.className = "key-actions";
+  const logs = document.createElement("button"); logs.type = "button"; logs.className = "secondary"; logs.textContent = "查看日志"; logs.addEventListener("click", () => openLogs(key));
+  const edit = document.createElement("button"); edit.type = "button"; edit.className = "secondary"; edit.textContent = "编辑"; edit.disabled = false; edit.addEventListener("click", () => openKeyEditor(key));
+  const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = key.enabled === false ? "" : "danger"; toggle.textContent = key.enabled === false ? "恢复" : "停用"; toggle.disabled = false; toggle.addEventListener("click", () => toggleKey(key));
+  if (key.id !== "legacy") { const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "danger"; revoke.textContent = "撤销"; revoke.addEventListener("click", () => revokeApiKey(key.id)); actions.append(revoke); } actions.append(logs, edit, toggle); row.append(detail, actions); return row;
+}
+async function loadApiKeys() {
+  const epoch = uiEpoch;
+  try {
+    const body = await (await adminCall("/admin/api-keys")).json(); if (epoch !== uiEpoch) return;
+    const list = $("api-key-list"); list.replaceChildren();
+    if (!body.data?.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "还没有 API 密钥。"; list.append(empty); return; }
+    body.data.forEach((key) => list.append(renderKey(key)));
+  } catch (error) { if (epoch === uiEpoch) setMessage("api-key-message", error.message); }
+}
+async function createApiKey(event) {
+  event.preventDefault(); const epoch = uiEpoch; setMessage("api-key-message", "");
+  try {
+    const created = await (await adminCall("/admin/api-keys", { method: "POST", body: JSON.stringify(keyPayload()) })).json();
+    if (epoch !== uiEpoch) return;
+    $("api-key-name").value = ""; $("key-allowlist").value = ""; $("key-expires").value = ""; $("key-rpm").value = ""; $("key-concurrency").value = "";
+    $("created-key").textContent = created.key || ""; $("created-key-panel").classList.remove("hidden");
+    await loadApiKeys();
+  } catch (error) { if (epoch === uiEpoch) setMessage("api-key-message", error.message); }
+}
+async function toggleKey(key) {
+  try { await (await adminCall(`/admin/api-keys/${encodeURIComponent(key.id)}`, { method: "PATCH", body: JSON.stringify({ enabled: key.enabled === false }) })).json(); await loadApiKeys(); }
+  catch (error) { setMessage("api-key-message", error.message); }
+}
+function toLocalInput(ms) { return ms == null ? "" : new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
+function fillEditAllowlist() { $("edit-key-allowlist-wrap").classList.toggle("hidden", $("edit-key-models-all").checked); }
+function openKeyEditor(key) { editKeyIsLegacy = key.id === "legacy";
+  $("edit-key-name").disabled = editKeyIsLegacy;
+  $("edit-key-id").value = key.id; $("edit-key-name").value = key.name || ""; $("edit-key-models-all").checked = key.modelAccess?.mode !== "allowlist"; $("edit-key-models-allowlist").checked = key.modelAccess?.mode === "allowlist"; $("edit-key-allowlist").value = (key.modelAccess?.models || []).join(", "); $("edit-key-expires").value = toLocalInput(key.expiresAt); $("edit-key-rpm").value = key.rateLimitPerMinute ?? ""; $("edit-key-concurrency").value = key.concurrencyLimit ?? ""; fillEditAllowlist(); $("key-edit-message").textContent = ""; $("key-edit-dialog").showModal();
+}
+async function saveKeyEditor() {
+  try { const payload = keyPayload("edit-"); delete payload.name; const patch = editKeyIsLegacy ? payload : { name: value("edit-key-name"), ...payload }; await (await adminCall(`/admin/api-keys/${encodeURIComponent($("edit-key-id").value)}`, { method: "PATCH", body: JSON.stringify(patch) })).json(); $("key-edit-dialog").close(); await loadApiKeys(); }
+  catch (error) { $("key-edit-message").textContent = error.message; }
+}
+let editKeyIsLegacy = false; let logKeyId = null, logCursor = null, logNextCursor = null, logCursorStack = [], logPage = 1;
+function openLogs(key) { logKeyId = key.id; $("logs-key-id").value = key.id; $("logs-key-label").textContent = `${key.name || "key"} · ${key.masked || key.id}`; $("logs-section").classList.remove("hidden"); $("logs-section").scrollIntoView({ behavior: "smooth", block: "start" }); logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; loadLogs(); }
+function closeLogs() { logListRequestToken += 1; logDetailRequestToken += 1; $("logs-section").classList.add("hidden"); $("log-detail").classList.add("hidden"); }
+
+function logValue(obj, ...names) { for (const n of names) if (obj?.[n] != null) return obj[n]; return null; }
+function bodyIsExpired(log) { return log?.bodyExpired === true || (log?.bodyExpired === undefined && log?.bodyExpiresAt != null && log.bodyExpiresAt <= Date.now()); }
+function filterLogsToKey(keyId, keyName) {
+  logKeyId = keyId;
+  $("logs-key-id").value = keyId;
+  $("logs-key-label").textContent = `${unknown(keyName)} · ${keyId}`;
+  logCursor = null;
+  logNextCursor = null;
+  logCursorStack = [];
+  logPage = 1;
+  loadLogs();
+}
+function renderLog(log) {
+  const row = document.createElement("article");
+  row.className = "log-row";
+  const main = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = `${unknown(logValue(log, "model", "modelId"))} · ${unknown(logValue(log, "outcome", "status"))}`;
+  const keyMeta = document.createElement("span");
+  const keyId = logValue(log, "keyId");
+  const keyName = logValue(log, "keyName");
+  keyMeta.textContent = `key：${unknown(keyName)} · ${unknown(keyId)}`;
+  const meta = document.createElement("span");
+  meta.textContent = `${fmtTime(logValue(log, "startedAt", "createdAt"))} · ${unknown(logValue(log, "requestId", "id"))} · ${logValue(log, "durationMs", "latencyMs", "elapsedMs") == null ? "耗时：未知" : "耗时：" + logValue(log, "durationMs", "latencyMs", "elapsedMs") + " ms"}`;
+  const usage = log.usage || {};
+  const tokens = logValue(log, "tokenUsage", "tokens", "usage") || usage;
+  const tok = typeof tokens === "object" ? `输入 ${tokens.inputTokens ?? tokens.promptTokens ?? "未知"} / 输出 ${tokens.outputTokens ?? tokens.completionTokens ?? "未知"} / 总计 ${tokens.totalTokens ?? "未知"}` : unknown(tokens);
+  const sub = document.createElement("span");
+  sub.textContent = `token usage：${tok}`;
+  const bodyState = document.createElement("span");
+  const bodyFlags = [];
+  if (bodyIsExpired(log)) {
+    bodyFlags.push("正文已过期");
+  } else {
+    if (log.bodyCaptured === false) bodyFlags.push("未记录正文");
+    if (log.requestTruncated) bodyFlags.push("请求正文已截断");
+    if (log.responseTruncated) bodyFlags.push("响应正文已截断");
+  }
+  bodyState.textContent = bodyFlags.length ? bodyFlags.join(" · ") : "正文状态：未截断";
+  main.append(title, keyMeta, meta, sub, bodyState);
+  const actions = document.createElement("div");
+  actions.className = "key-actions";
+  const view = document.createElement("button");
+  view.type = "button";
+  view.className = "secondary";
+  view.textContent = "查看详情";
+  view.addEventListener("click", () => loadLogDetail(log.id));
+  const filter = document.createElement("button");
+  filter.type = "button";
+  filter.className = "secondary";
+  filter.textContent = "筛选此 key";
+  filter.disabled = keyId == null || keyId === "";
+  filter.addEventListener("click", () => filterLogsToKey(String(keyId), keyName));
+  actions.append(view, filter);
+  row.append(main, actions);
+  return row;
+}
+async function loadLogs() {
+  const epoch = uiEpoch;
+  const requestToken = ++logListRequestToken;
+  const params = new URLSearchParams();
+  const key = value("logs-key-id");
+  logKeyId = key || null;
+  $("logs-key-label").textContent = key || "全部 key";
+  if (key) params.set("keyId", key);
+  if (value("logs-model")) params.set("model", value("logs-model"));
+  if (value("logs-status")) params.set("outcome", value("logs-status"));
+  if (value("logs-from")) params.set("from", String(new Date(value("logs-from")).getTime()));
+  if (value("logs-to")) params.set("to", String(new Date(value("logs-to")).getTime()));
+  if (logCursor) params.set("cursor", logCursor);
+  params.set("limit", "50");
+  setMessage("logs-message", "正在读取日志…");
+  try {
+    const body = await (await adminCall(`/admin/logs?${params}`)).json();
+    if (epoch !== uiEpoch || requestToken !== logListRequestToken) return;
+    const list = $("logs-list");
+    list.dataset.nextCursor = body.nextCursor || "";
+    logNextCursor = body.nextCursor || null;
+    list.replaceChildren();
+    if (!body.data?.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "没有符合条件的日志。";
+      list.append(empty);
+    } else {
+      body.data.forEach((log) => list.append(renderLog(log)));
+    }
+    $("logs-next").disabled = !logNextCursor;
+    $("logs-prev").disabled = logCursorStack.length === 0;
+    $("logs-page-label").textContent = `第 ${logPage} 页`;
+    setMessage("logs-message", body.data?.length ? `显示 ${body.data.length} 条日志。` : "没有符合条件的日志。");
+  } catch (error) {
+    if (epoch === uiEpoch && requestToken === logListRequestToken) setMessage("logs-message", error.message);
+  }
+}
+
+async function loadLogDetail(id) {
+  const epoch = uiEpoch;
+  const requestToken = ++logDetailRequestToken;
+  try {
+    const detail = await (await adminCall(`/admin/logs/${encodeURIComponent(id)}`)).json();
+    if (epoch !== uiEpoch || requestToken !== logDetailRequestToken) return;
+    $("log-detail").classList.remove("hidden");
+    $("log-detail-status").textContent = unknown(logValue(detail, "outcome", "status"));
+    const meta = $("log-detail-meta");
+    meta.replaceChildren();
+    const bodyExpired = bodyIsExpired(detail);
+    const bodyStatus = bodyExpired
+      ? "正文已过期"
+      : detail.bodyCaptured === false
+        ? "本次请求未开启正文记录"
+        : "正文已记录";
+    const fields = [
+      ["请求 ID", logValue(detail, "requestId", "id")],
+      ["key 名称", detail.keyName],
+      ["key ID", detail.keyId],
+      ["协议", detail.protocol],
+      ["模型", logValue(detail, "model", "modelId")],
+      ["状态", logValue(detail, "outcome", "status")],
+      ["HTTP 状态", detail.httpStatus],
+      ["开始", fmtTime(detail.startedAt)],
+      ["完成", fmtTime(detail.completedAt)],
+      ["耗时", detail.durationMs == null ? "未知" : detail.durationMs + " ms"],
+      ["token usage", JSON.stringify(detail.usage || detail.tokenUsage || null)],
+      ["正文状态", bodyStatus],
+      ["正文到期", detail.bodyExpiresAt == null ? "不适用" : fmtTime(detail.bodyExpiresAt)]
+    ];
+    for (const [label, val] of fields) {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = unknown(val);
+      meta.append(dt, dd);
+    }
+    const bodies = $("log-detail-bodies");
+    bodies.replaceChildren();
+    const addBody = (label, body, truncated) => {
+      const wrap = document.createElement("div");
+      const h = document.createElement("h4");
+      h.textContent = label;
+      const status = document.createElement("p");
+      status.className = "muted";
+      if (bodyExpired) status.textContent = "正文已过期并清理，无法恢复。";
+      else if (truncated) status.textContent = "正文超过采集上限，已截断；下面仅显示保留片段。";
+      else if (body == null && detail.bodyCaptured === false) status.textContent = "本次请求未开启正文记录。";
+      else if (body == null) status.textContent = "正文未完成或不可用。";
+      else status.textContent = detail.bodyExpiresAt == null ? "正文已记录。" : `正文保留至 ${fmtTime(detail.bodyExpiresAt)}。`;
+      const pre = document.createElement("pre");
+      pre.className = "body-preview";
+      pre.textContent = body == null ? "无可显示正文。" : typeof body === "string" ? body : JSON.stringify(body, null, 2);
+      wrap.append(h, status, pre);
+      bodies.append(wrap);
+    };
+    addBody("请求正文", detail.requestBody, Boolean(detail.requestTruncated));
+    addBody("响应正文", detail.responseBody, Boolean(detail.responseTruncated));
+    if (detail.requestBody != null || detail.responseBody != null) {
+      const exportButton = document.createElement("button");
+      exportButton.type = "button";
+      exportButton.className = "secondary";
+      exportButton.textContent = "下载正文";
+      exportButton.addEventListener("click", () => {
+        const blob = new Blob([JSON.stringify(detail, null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `oneapi-log-${id}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+      bodies.append(exportButton);
+    }
+  } catch (error) {
+    if (epoch === uiEpoch && requestToken === logDetailRequestToken) setMessage("logs-message", error.message);
+  }
+}
+async function loadLogSettings() { const epoch = uiEpoch;
+  try { const s = await (await adminCall("/admin/log-settings")).json(); if (epoch !== uiEpoch) return; $("log-body-enabled").checked = Boolean(s.captureBodies); $("log-retention-days").value = s.summaryRetentionDays ?? 30; $("body-retention-days").value = s.bodyRetentionDays ?? 7; $("log-settings-state").textContent = s.captureBodies ? "正文已开启" : "正文已关闭"; }
+  catch (error) { setMessage("log-settings-message", error.message); }
+}
+async function saveLogSettings() { const epoch = uiEpoch;
+  try { const body = await (await adminCall("/admin/log-settings", { method: "PATCH", body: JSON.stringify({ captureBodies: $("log-body-enabled").checked, summaryRetentionDays: Number($("log-retention-days").value), bodyRetentionDays: Number($("body-retention-days").value) }) })).json(); if (epoch !== uiEpoch) return; $("log-settings-state").textContent = body.captureBodies ? "正文已开启" : "正文已关闭"; setMessage("log-settings-message", "日志设置已保存。"); }
+  catch (error) { setMessage("log-settings-message", error.message); }
+}
+$("refresh-account-button").addEventListener("click", () => loadAccountOverview(true));
+$("key-models-all").addEventListener("change", () => $("key-allowlist-wrap").classList.add("hidden"));
+$("key-models-allowlist").addEventListener("change", () => $("key-allowlist-wrap").classList.remove("hidden"));
+$("edit-key-models-all").addEventListener("change", fillEditAllowlist); $("edit-key-models-allowlist").addEventListener("change", fillEditAllowlist);
+$("key-edit-save").addEventListener("click", saveKeyEditor);
+$("logs-filter-button").addEventListener("click", () => { logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; loadLogs(); });
+$("logs-close-button").addEventListener("click", closeLogs); $("logs-next").addEventListener("click", () => { if (!logNextCursor) return; logCursorStack.push(logCursor); logCursor = logNextCursor; logPage += 1; loadLogs(); }); $("logs-prev").addEventListener("click", () => { if (!logCursorStack.length) return; logCursor = logCursorStack.pop(); logPage = Math.max(1, logPage - 1); loadLogs(); }); $("save-log-settings-button").addEventListener("click", saveLogSettings);
+
+
+$("all-logs-button").addEventListener("click", () => { logKeyId = null; $("logs-key-id").value = ""; $("logs-key-label").textContent = "全部 key"; $("logs-section").classList.remove("hidden"); logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; loadLogs(); $("logs-section").scrollIntoView({ behavior: "smooth", block: "start" }); });

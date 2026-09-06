@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:sdk": "node scripts/sdk-compat.mjs",
     "build": "wrangler deploy --dry-run --outdir dist",
-    "smoke:live": "node scripts/live-session-smoke.mjs"
+    "smoke:live": "node scripts/live-session-smoke.mjs",
+    "test:extensions": "node scripts/verify-extensions.mjs",
+    "smoke:extensions": "node scripts/verify-extensions.mjs --live"
   },
   "dependencies": {
     "openai": "7.10.0"

@@ -79,6 +79,8 @@ interface StreamLifecycle {
   abort: () => void;
   finish: () => Promise<void>;
   failure?: () => GatewayError | undefined;
+  failed?: (error: unknown) => void;
+  terminal?: (type: string, payload: Record<string, unknown>) => void;
 }
 
 function streamErrorEvent(error: unknown): Uint8Array {
@@ -121,7 +123,11 @@ export function responseEventStream(body: ReadableStream<Uint8Array>, lifecycle:
         while (true) {
           const next = await iterator.next();
           if (next.done) {
-            if (!terminal) enqueue(controller, streamErrorEvent(new GatewayError(502, "upstream_stream_truncated", "上游流在终态事件前断开。", undefined, "server_error")));
+            if (!terminal) {
+              const error = new GatewayError(502, "upstream_stream_truncated", "上游流在终态事件前断开。", undefined, "server_error");
+              lifecycle.failed?.(error);
+              enqueue(controller, streamErrorEvent(error));
+            }
             controller.close();
             await finishOnce();
             return;
@@ -129,14 +135,19 @@ export function responseEventStream(body: ReadableStream<Uint8Array>, lifecycle:
           if (next.value.data === "[DONE]") continue;
           const payload = parseSseJson(next.value);
           const type = eventType(next.value, payload);
-          if (type === "response.completed" || type === "response.failed" || type === "response.incomplete" || type === "error") terminal = true;
+          if (type === "response.completed" || type === "response.failed" || type === "response.incomplete" || type === "error") {
+            terminal = true;
+            lifecycle.terminal?.(type, payload);
+          }
           if (type !== "message" && (type.startsWith("response.") || type === "error")) {
             enqueue(controller, encodeSse(type, payload));
             return;
           }
         }
       } catch (error) {
-        enqueue(controller, streamErrorEvent(lifecycle.failure?.() ?? error));
+        const failure = lifecycle.failure?.() ?? error;
+        lifecycle.failed?.(failure);
+        enqueue(controller, streamErrorEvent(failure));
         controller.close();
         lifecycle.abort();
         await finishOnce();
@@ -240,7 +251,9 @@ export function chatEventStream(
         while (true) {
           const next = await iterator.next();
           if (next.done) {
-            enqueue(controller, chatData({ error: { message: "上游流在终态事件前断开。", type: "server_error", code: "upstream_stream_truncated" } }));
+            const error = new GatewayError(502, "upstream_stream_truncated", "上游流在终态事件前断开。", undefined, "server_error");
+            lifecycle.failed?.(error);
+            enqueue(controller, chatData({ error: { message: error.message, type: error.type, code: error.code } }));
             controller.close();
             lifecycle.abort();
             await finishOnce();
@@ -279,6 +292,7 @@ export function chatEventStream(
             return;
           }
           if (type === "response.completed") {
+            lifecycle.terminal?.(type, payload);
             const response = payload.response as Record<string, unknown> | undefined;
             const usage = includeUsage ? usageForChat(response?.usage) : undefined;
             enqueue(controller, chatData(chatChunk(id, model, {}, sawTool ? "tool_calls" : "stop", usage)));
@@ -286,6 +300,7 @@ export function chatEventStream(
             return;
           }
           if (type === "response.failed" || type === "response.incomplete" || type === "error") {
+            lifecycle.terminal?.(type, payload);
             const error = terminalError(payload, type);
             enqueue(controller, chatData({ error: { message: error.message, type: error.type, code: error.code } }));
             controller.close();
@@ -297,6 +312,7 @@ export function chatEventStream(
       } catch (error) {
         const failure = lifecycle.failure?.() ?? error;
         const known = failure instanceof GatewayError ? failure : new GatewayError(502, "invalid_upstream_stream", "上游响应流处理失败。", undefined, "server_error");
+        lifecycle.failed?.(known);
         enqueue(controller, chatData({ error: { message: known.message, type: known.type, code: known.code } }));
         controller.close();
         lifecycle.abort();

@@ -1,11 +1,12 @@
 import { CODEX_BASE_URL, AUTH_BASE_URL } from "./constants";
 
-type MockMode = "normal" | "pending" | "delay" | "network" | "invalid_grant" | "slow_body" | "challenge" | "oversized_error";
-interface MockControl { devicePoll: MockMode; refresh: MockMode; models: MockMode; persistDelayMs: number; loginStateDelayMs: number }
+type MockMode = "normal" | "pending" | "delay" | "late" | "network" | "invalid_grant" | "slow_body" | "challenge" | "oversized_error" | "invalid_models";
+interface MockControl { devicePoll: MockMode; refresh: MockMode; models: MockMode; usage: MockMode; persistDelayMs: number; loginStateDelayMs: number }
 const control: MockControl = {
   devicePoll: "normal",
   refresh: "normal",
   models: "normal",
+  usage: "normal",
   persistDelayMs: 0,
   loginStateDelayMs: 0
 };
@@ -13,6 +14,11 @@ const stats = {
   devicePoll: 0,
   refresh: 0,
   codexRequests: 0,
+  modelRequests: 0,
+  usageRequests: 0,
+  lastReasoningPresent: false,
+  lastReasoningEffort: "",
+  lastReasoningSummary: "",
   lastOriginator: "",
   lastUserAgent: "",
   lastVersion: "",
@@ -29,11 +35,17 @@ export function resetMockUpstream(): void {
   control.devicePoll = "normal";
   control.refresh = "normal";
   control.models = "normal";
+  control.usage = "normal";
   control.persistDelayMs = 0;
   control.loginStateDelayMs = 0;
   stats.devicePoll = 0;
   stats.refresh = 0;
   stats.codexRequests = 0;
+  stats.modelRequests = 0;
+  stats.usageRequests = 0;
+  stats.lastReasoningPresent = false;
+  stats.lastReasoningEffort = "";
+  stats.lastReasoningSummary = "";
   stats.lastOriginator = "";
   stats.lastUserAgent = "";
   stats.lastVersion = "";
@@ -115,7 +127,7 @@ function mockTokens(suffix: string) {
   const exp = Math.floor(Date.now() / 1000) + 3600;
   const auth = { chatgpt_account_id: "acct_mock", chatgpt_plan_type: "mock" };
   return {
-    id_token: token({ exp, "https://api.openai.com/auth": auth }),
+    id_token: token({ exp, email: "mock@example.com", "https://api.openai.com/auth": auth }),
     access_token: token({ exp, scope: "codex" }),
     refresh_token: `mock-refresh-${suffix}`
   };
@@ -129,7 +141,7 @@ function event(type: string, payload: Record<string, unknown>): string {
   return `event: ${type}\r\ndata: ${JSON.stringify({ type, ...payload })}\r\n\r\n`;
 }
 
-function sseResponse(body: Record<string, unknown>): Response {
+function sseResponse(body: Record<string, unknown>, signal: AbortSignal): Response {
   const id = `resp_${crypto.randomUUID().replace(/-/g, "")}`;
   const model = String(body.model ?? "gpt-mock");
   const wantsTool = Array.isArray(body.tools) && body.tools.length > 0 && /call_tool|工具|天气/.test(collectText(body.input));
@@ -144,7 +156,7 @@ function sseResponse(body: Record<string, unknown>): Response {
     model,
     output,
     output_text: wantsTool ? "" : "你好，mock",
-    usage: { input_tokens: 4, output_tokens: wantsTool ? 8 : 3, total_tokens: wantsTool ? 12 : 7 }
+    ...(/mock:no-usage/.test(collectText(body.input)) ? {} : { usage: { input_tokens: 4, output_tokens: wantsTool ? 8 : 3, total_tokens: wantsTool ? 12 : 7 } })
   };
   const parts: string[] = [event("response.created", { response: { ...completed, status: "in_progress", output: [] } })];
   if (wantsTool) {
@@ -169,7 +181,15 @@ function sseResponse(body: Record<string, unknown>): Response {
   const slow = /slow/.test(collectText(body.input));
   return new Response(new ReadableStream<Uint8Array>({
     async pull(controller) {
+      if (signal.aborted) {
+        controller.error(signal.reason ?? new Error("aborted"));
+        return;
+      }
       if (slow) await new Promise((resolve) => setTimeout(resolve, 10));
+      if (signal.aborted) {
+        controller.error(signal.reason ?? new Error("aborted"));
+        return;
+      }
       const chunk = chunks.shift();
       if (chunk) controller.enqueue(chunk);
       else controller.close();
@@ -198,9 +218,45 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
     }
     return Response.json(mockTokens(refresh ? "refreshed" : "initial"));
   }
+  if (url.href === "https://chatgpt.com/backend-api/wham/usage") {
+    recordCodexRequest(request, url);
+    stats.usageRequests += 1;
+    if (control.usage === "delay") await delay(75, request.signal);
+    if (control.usage === "network") throw new Error("synthetic usage network failure");
+    if (control.usage === "invalid_grant") return Response.json({ error: { code: "invalid_grant" } }, { status: 401 });
+    return Response.json({
+      plan_type: "mock",
+      rate_limit: {
+        primary_window: { used_percent: 25, limit_window_seconds: 7 * 24 * 60 * 60, reset_at: 2000007200 },
+        secondary_window: { used_percent: 40, limit_window_seconds: 5 * 60 * 60, reset_at: 2000003600 }
+      },
+      additional_rate_limits: [{
+        metered_feature: "gpt-mock-special",
+        limit_name: "Mock special",
+        normal_model_slug: "gpt-mock",
+        rate_limit: {
+          primary_window: { used_percent: 10, limit_window_seconds: 60 * 60, reset_at: 2000001800 }
+        }
+      }]
+    });
+  }
   if (url.href.startsWith(`${CODEX_BASE_URL}/models`)) {
     recordCodexRequest(request, url);
-    const value = { models: [{ slug: "gpt-mock", display_name: "Mock model", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }] }] };
+    stats.modelRequests += 1;
+    const value = { models: [
+      {
+        slug: "gpt-mock",
+        display_name: "Mock model",
+        supported_in_api: true,
+        supported_reasoning_levels: [{ effort: "none" }, { effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "max" }],
+        default_reasoning_level: "low"
+      },
+      { slug: "gpt-empty", display_name: "No reasoning", supported_in_api: true, supported_reasoning_levels: [], default_reasoning_level: "high" },
+      { slug: "gpt-unknown", display_name: "Unknown reasoning", supported_in_api: true, default_reasoning_level: "high" }
+    ] };
+    if (control.models === "invalid_models") return Response.json(null);
+    if (control.models === "delay") await delay(75, request.signal);
+    if (control.models === "late") await new Promise((resolve) => setTimeout(resolve, 75));
     if (control.models === "challenge") {
       return trackedBody(
         [new TextEncoder().encode("<!doctype html><title>Just a moment...</title><p>SECRET_BODY_MUST_NOT_APPEAR</p>"), new TextEncoder().encode("pending")],
@@ -224,6 +280,12 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
   if (url.href.startsWith(`${CODEX_BASE_URL}/responses`)) {
     recordCodexRequest(request, url);
     const body = await request.json() as Record<string, unknown>;
+    stats.lastReasoningPresent = Object.prototype.hasOwnProperty.call(body, "reasoning");
+    const reasoning = body.reasoning && typeof body.reasoning === "object" && !Array.isArray(body.reasoning)
+      ? body.reasoning as Record<string, unknown>
+      : null;
+    stats.lastReasoningEffort = typeof reasoning?.effort === "string" ? reasoning.effort : "";
+    stats.lastReasoningSummary = typeof reasoning?.summary === "string" ? reasoning.summary : "";
     const marker = collectText(body.input);
     if (marker.includes("mock:http401")) return Response.json({}, { status: 401 });
     if (marker.includes("mock:http403")) return Response.json({}, { status: 403 });
@@ -238,7 +300,7 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
     if (marker.includes("mock:invalid-utf8")) return new Response(new Uint8Array([0xc3, 0x28]), { headers: { "Content-Type": "text/event-stream" } });
     if (marker.includes("mock:truncated")) return new Response(event("response.created", { response: { id: "resp_truncated", status: "in_progress" } }), { headers: { "Content-Type": "text/event-stream" } });
     if (marker.includes("mock:failed")) return new Response(event("response.failed", { response: { id: "resp_failed", status: "failed", error: { message: "synthetic failure" } } }), { headers: { "Content-Type": "text/event-stream" } });
-    return sseResponse(body);
+    return sseResponse(body, request.signal);
   }
   return Response.json({ error: "unexpected mock upstream path" }, { status: 404 });
 }

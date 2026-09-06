@@ -34,7 +34,8 @@ const allowedUpstream = new Map([
   ])],
   ["chatgpt.com", new Map([
     ["/backend-api/codex/models", "GET"],
-    ["/backend-api/codex/responses", "POST"]
+    ["/backend-api/codex/responses", "POST"],
+    ["/backend-api/wham/usage", "GET"]
   ])]
 ]);
 
@@ -428,12 +429,43 @@ export async function createRuntime({
     }
     }));
     await runtime.ready;
+    const groupControl = async (action, groupId) => {
+      const response = await runtime.dispatchFetch(`https://oneapi.internal/__internal/request-groups/${action}?group_id=${encodeURIComponent(groupId)}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bindings.TOKEN_ENCRYPTION_KEY}` }
+      });
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status !== 204) throw new Error("本地请求组控制失败。");
+    };
     frontServer = await startLocalHttpServer({
       runtime,
       port,
-      openGroup: (groupId) => localOutbound?.openGroup(groupId) ?? true,
-      cancelGroup: (groupId) => localOutbound?.cancelGroup(groupId),
-      closeGroup: (groupId) => localOutbound?.closeGroup(groupId)
+      bridgeToken: bindings.TOKEN_ENCRYPTION_KEY,
+      openGroup: async (groupId) => {
+        if (localOutbound && !localOutbound.openGroup(groupId)) return false;
+        try {
+          await groupControl("open", groupId);
+          return true;
+        } catch {
+          localOutbound?.closeGroup(groupId);
+          await groupControl("close", groupId).catch(() => undefined);
+          return false;
+        }
+      },
+      cancelGroup: async (groupId) => {
+        try {
+          await groupControl("cancel", groupId);
+        } finally {
+          localOutbound?.cancelGroup(groupId);
+        }
+      },
+      closeGroup: async (groupId) => {
+        try {
+          await groupControl("close", groupId);
+        } finally {
+          localOutbound?.closeGroup(groupId);
+        }
+      }
     });
   } catch (error) {
     localOutbound?.dispose();

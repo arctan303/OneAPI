@@ -44,7 +44,10 @@ export interface LoginPrivateState {
 
 export interface ModelCapability {
   id: string;
-  reasoningEfforts: string[];
+  reasoning: {
+    supportedEfforts: string[] | null;
+    defaultEffort: string | null;
+  };
 }
 
 export interface StoredAdminSession {
@@ -59,4 +62,88 @@ export interface StoredApiKey {
   digest: string;
   masked: string;
   createdAt: number;
+  enabled?: boolean;
+  expiresAt?: number | null;
+  modelAccess?: ModelAccess;
+  rateLimitPerMinute?: number | null;
+  concurrencyLimit?: number | null;
+}
+
+export interface ModelAccess {
+  mode: "all" | "allowlist";
+  models: string[];
+}
+
+export interface ApiKeyPolicy {
+  enabled: boolean;
+  expiresAt: number | null;
+  modelAccess: ModelAccess;
+  rateLimitPerMinute: number | null;
+  concurrencyLimit: number | null;
+}
+
+export interface GatewayIdentity extends ApiKeyPolicy {
+  id: string;
+  name: string;
+  masked: string;
+  createdAt: number;
+  legacy: boolean;
+}
+
+export interface UsageWindow {
+  limitId: string | null;
+  label: string | null;
+  usedPercent: number | null;
+  remainingPercent: number | null;
+  resetsAt: number | null;
+  windowDurationMins: number | null;
+}
+
+export interface UsageSnapshot {
+  available: true;
+  fetchedAt: number;
+  lastSuccessAt: number;
+  error: null;
+  windows: { fiveHour: UsageWindow | null; sevenDay: UsageWindow | null };
+  additional: UsageWindow[];
+}
+
+export interface LogSettings {
+  summaryRetentionDays: number;
+  bodyRetentionDays: number;
+  captureBodies: boolean;
+  maxBodyBytes: number;
+}
+
+export type RequestLogOutcome = "completed" | "error" | "cancelled" | "incomplete";
+
+export interface RequestLogUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+}
+
+export interface RequestLogSummary {
+  id: string;
+  requestId: string;
+  keyId: string;
+  keyName: string;
+  protocol: "responses" | "chat";
+  model: string;
+  startedAt: number;
+  completedAt: number | null;
+  durationMs: number | null;
+  httpStatus: number | null;
+  outcome: RequestLogOutcome;
+  usage: RequestLogUsage;
+  bodyCaptured: boolean;
+  bodyExpired: boolean;
+  requestTruncated: boolean;
+  responseTruncated: boolean;
+}
+
+export interface StoredRequestLog extends RequestLogSummary {
+  requestBody: Record<string, unknown> | null;
+  responseBody: Record<string, unknown> | null;
+  bodyExpiresAt: number | null;
 }

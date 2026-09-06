@@ -12,6 +12,7 @@ import { unstable_getMiniflareWorkerOptions } from "wrangler";
 import { createLocalOutboundService, createNodeOutbound, createRuntime } from "./dev-local.mjs";
 
 const origin = "http://127.0.0.1";
+const traceStage = (stage) => { if (process.env.ONEAPI_TEST_TRACE === "1") console.log(JSON.stringify({ testStage: stage })); };
 const configPath = resolve("wrangler.jsonc");
 const { workerOptions } = unstable_getMiniflareWorkerOptions(configPath, "test", {
   overrides: { enableContainers: false }
@@ -42,12 +43,26 @@ assert.deepEqual(forwarded, [{
   body: JSON.stringify({ model: "gpt-mock", input: "fixture" })
 }]);
 
+let usageFetchCalls = 0;
+const usageOutbound = createNodeOutbound(async (request) => {
+  usageFetchCalls++;
+  assert.equal(request.url, "https://chatgpt.com/backend-api/wham/usage");
+  assert.equal(request.method, "GET");
+  assert.equal(request.redirect, "manual");
+  return new NodeResponse(JSON.stringify({ rate_limit: null }));
+}, false);
+assert.deepEqual(await (await usageOutbound(new NodeRequest("https://chatgpt.com/backend-api/wham/usage"))).json(), { rate_limit: null });
+assert.equal(usageFetchCalls, 1);
+
 const rejectionFetchCalls = [];
 const rejectOutbound = createNodeOutbound(async (request) => {
   rejectionFetchCalls.push(request.url);
   return new NodeResponse("unexpected");
 }, false);
 const rejectedRequests = [
+  new NodeRequest("https://chatgpt.com/backend-api/wham/usage", { method: "POST" }),
+  new NodeRequest("https://chatgpt.com/backend-api/wham/usage?unexpected=1"),
+  new NodeRequest("https://chatgpt.com/backend-api/wham/usage/"),
   new NodeRequest("http://chatgpt.com/backend-api/codex/models?client_version=test"),
   new NodeRequest("https://chatgpt.com:444/backend-api/codex/models?client_version=test"),
   new NodeRequest("https://example.com/backend-api/codex/models?client_version=test"),
@@ -511,6 +526,31 @@ async function openStreamingRequest(baseUrl, path, headers, body) {
   });
 }
 
+function openPendingRequest(baseUrl, path, headers, body) {
+  let settled = false;
+  let resolveClosed;
+  const closed = new Promise((resolvePromise) => { resolveClosed = resolvePromise; });
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    resolveClosed();
+  };
+  const request = httpRequest(new URL(path, baseUrl), { method: "POST", headers }, (response) => {
+    response.resume();
+    response.once("close", finish);
+    response.once("error", finish);
+  });
+  request.once("close", finish);
+  request.once("error", finish);
+  request.end(body);
+  return {
+    destroy() {
+      request.destroy();
+    },
+    closed
+  };
+}
+
 async function json(runtime, path, init = {}) {
   const response = await send(runtime, path, init);
   const value = await response.json();
@@ -653,6 +693,7 @@ try {
   });
   assert.equal(typeof created.value.key, "string");
   const createdKey = created.value.key;
+  const createdKeyId = created.value.id;
   await wrangler.close();
   wrangler = undefined;
 
@@ -700,6 +741,7 @@ try {
   let workerDoOutboundCalls = 0;
   const workerDoAborted = new Set();
   const workerDoSourceCancelled = new Set();
+  const workerDoStarted = new Set();
   cancellationRuntime = await createRuntime({
     useMock: true,
     persistRoot: nodePersistRoot,
@@ -711,7 +753,7 @@ try {
       assert.equal(new URL(request.url).pathname, "/backend-api/codex/responses");
       const payload = await request.json();
       const encodedInput = JSON.stringify(payload.input);
-      const marker = ["front-a", "front-b", "after-cancel"].find((value) => encodedInput.includes(value)) ?? encodedInput;
+      const marker = ["front-a", "front-b", "aggregate-cancel", "disconnect-cancel", "after-cancel"].find((value) => encodedInput.includes(value)) ?? encodedInput;
       if (marker === "after-cancel") {
         const item = { id: "msg_after", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "after cancel", annotations: [] }] };
         const completed = { id: "resp_after", object: "response", status: "completed", model: "gpt-mock", output: [item], output_text: "after cancel" };
@@ -721,6 +763,7 @@ try {
         ].join("");
         return new NodeResponse(body, { headers: { "Content-Type": "text/event-stream" } });
       }
+      workerDoStarted.add(marker);
       return new NodeResponse(new ReadableStream({
         start(controller) {
           request.signal.addEventListener("abort", () => {
@@ -755,6 +798,7 @@ try {
   assert.match(frontA.chunk.toString("utf8"), /response\.created/);
   assert.match(frontB.chunk.toString("utf8"), /response\.created/);
   assert.deepEqual(cancellationRuntime.getLocalOutboundSnapshot(), { active: 2, pending: 0, groups: 2 });
+  traceStage("front_streams_open");
   frontA.destroy();
   const frontADeadline = Date.now() + 2_000;
   while ((!workerDoAborted.has("front-a") || !workerDoSourceCancelled.has("front-a")) && Date.now() < frontADeadline) {
@@ -773,18 +817,64 @@ try {
   }
   assert.equal(workerDoAborted.has("front-b"), true);
   assert.equal(workerDoSourceCancelled.has("front-b"), true);
+  const publicControl = await fetch(`${cancellationOrigin}/__internal/request-groups/cancel?group_id=${crypto.randomUUID()}`, {
+    method: "POST",
+    headers: { "X-OneAPI-Local-Bridge-Token": adminKey }
+  });
+  assert.notEqual(publicControl.status, 204, "公开HTTP客户端不得调用内部请求组入口");
+
+  const aggregateClient = openPendingRequest(
+    cancellationOrigin,
+    "/v1/responses",
+    streamHeaders,
+    JSON.stringify({ model: "gpt-mock", input: "aggregate-cancel", stream: false })
+  );
+  const aggregateStartDeadline = Date.now() + 2_000;
+  while (!workerDoStarted.has("aggregate-cancel") && Date.now() < aggregateStartDeadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+  assert.equal(workerDoStarted.has("aggregate-cancel"), true, "普通聚合请求未到达上游headers阶段");
+  aggregateClient.destroy();
+  await aggregateClient.closed;
+  const aggregateCancelDeadline = Date.now() + 2_000;
+  while ((!workerDoAborted.has("aggregate-cancel") || !workerDoSourceCancelled.has("aggregate-cancel")) && Date.now() < aggregateCancelDeadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+  assert.equal(workerDoAborted.has("aggregate-cancel"), true);
+  assert.equal(workerDoSourceCancelled.has("aggregate-cancel"), true);
+  let aggregateLog;
+  const aggregateLogDeadline = Date.now() + 2_000;
+  while (!aggregateLog && Date.now() < aggregateLogDeadline) {
+    const result = await json(cancellationOrigin, `/admin/logs?keyId=${encodeURIComponent(createdKeyId)}&outcome=cancelled`, {
+      headers: { Authorization: `Bearer ${adminKey}` }
+    });
+    aggregateLog = result.value.data.find((entry) => entry.httpStatus === 499);
+    if (!aggregateLog) await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+  assert.equal(aggregateLog?.outcome, "cancelled");
+  assert.equal(aggregateLog?.httpStatus, 499);
+  const aggregateCleanupDeadline = Date.now() + 2_000;
+  while (cancellationRuntime.getLocalOutboundSnapshot().groups !== 0 && Date.now() < aggregateCleanupDeadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+  assert.deepEqual(cancellationRuntime.getLocalOutboundSnapshot(), { active: 0, pending: 0, groups: 0 });
+  traceStage("aggregate_cancel_complete");
+
+  traceStage("before_oversized_request");
   const oversizedResponse = await fetch(`${cancellationOrigin}/v1/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${createdKey}`, "Content-Type": "application/json" },
     body: "x".repeat(1024 * 1024 + 1)
   });
+  traceStage("oversized_headers_received");
   assert.equal(oversizedResponse.status, 413);
   assert.equal(oversizedResponse.headers.get("content-type"), "application/json");
   assert.equal(oversizedResponse.headers.get("x-content-type-options"), "nosniff");
   const oversizedError = await oversizedResponse.json();
   assert.equal(oversizedError.error.code, "request_too_large");
   assert.equal(oversizedError.error.param, "body");
-  assert.equal(workerDoOutboundCalls, 2);
+  assert.equal(workerDoOutboundCalls, 3);
+  traceStage("before_after_cancel_generation");
   const afterCancel = await json(cancellationOrigin, "/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${createdKey}`, "Content-Type": "application/json" },
@@ -792,9 +882,13 @@ try {
   });
   assert.equal(afterCancel.value.status, "completed");
   assert.equal(afterCancel.value.output_text, "after cancel");
-  assert.equal(workerDoOutboundCalls, 3);
-  await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  assert.equal(workerDoOutboundCalls, 4);
+  const finalCleanupDeadline = Date.now() + 2_000;
+  while (cancellationRuntime.getLocalOutboundSnapshot().groups !== 0 && Date.now() < finalCleanupDeadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
   assert.deepEqual(cancellationRuntime.getLocalOutboundSnapshot(), { active: 0, pending: 0, groups: 0 });
+  traceStage("cancellation_checks_complete");
   await cancellationRuntime.dispose();
   cancellationRuntime = undefined;
 
