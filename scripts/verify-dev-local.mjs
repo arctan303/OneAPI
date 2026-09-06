@@ -54,12 +54,26 @@ const usageOutbound = createNodeOutbound(async (request) => {
 assert.deepEqual(await (await usageOutbound(new NodeRequest("https://chatgpt.com/backend-api/wham/usage"))).json(), { rate_limit: null });
 assert.equal(usageFetchCalls, 1);
 
+let certCalls = 0;
+const certOutbound = createNodeOutbound(async (request) => {
+  certCalls++;
+  assert.equal(request.url, "https://oneapi-team.cloudflareaccess.com/cdn-cgi/access/certs");
+  assert.equal(request.redirect, "manual");
+  return new NodeResponse(JSON.stringify({ keys: [] }));
+}, false);
+assert.deepEqual(await (await certOutbound(new NodeRequest("https://oneapi-team.cloudflareaccess.com/cdn-cgi/access/certs"))).json(), { keys: [] });
+assert.equal(certCalls, 1);
 const rejectionFetchCalls = [];
 const rejectOutbound = createNodeOutbound(async (request) => {
   rejectionFetchCalls.push(request.url);
   return new NodeResponse("unexpected");
 }, false);
 const rejectedRequests = [
+  new NodeRequest("https://oneapi-team.cloudflareaccess.com/cdn-cgi/access/certs?url=https://example.com"),
+  new NodeRequest("https://oneapi-team.cloudflareaccess.com/cdn-cgi/access/certs", { method: "POST" }),
+  new NodeRequest("https://oneapi-team.cloudflareaccess.com.evil.test/cdn-cgi/access/certs"),
+  new NodeRequest("https://oneapi-team.cloudflareaccess.com:444/cdn-cgi/access/certs"),
+  new NodeRequest("https://oneapi-team.cloudflareaccess.com/cdn-cgi/access/login"),
   new NodeRequest("https://chatgpt.com/backend-api/wham/usage", { method: "POST" }),
   new NodeRequest("https://chatgpt.com/backend-api/wham/usage?unexpected=1"),
   new NodeRequest("https://chatgpt.com/backend-api/wham/usage/"),

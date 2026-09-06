@@ -9,10 +9,32 @@ let modelRequestToken = 0;
 let logListRequestToken = 0;
 let logDetailRequestToken = 0;
 let modelCapabilities = new Map();
+let sessionProvider = null;
+let sessionLogoutUrl = null;
+let accessAvailabilityToken = 0;
+let accessConfigRequestToken = 0;
+let accessSaveToken = 0;
 
 function setMessage(id, text) { $(id).textContent = text; }
 function setBadge(id, text) { $(id).textContent = text; }
 function value(id) { return $(id).value.trim(); }
+function safeLogoutPath(url) { return typeof url === "string" && url.startsWith("/") && !url.startsWith("//") ? url : null; }
+function renderAccessConfig(config) {
+  const enabled = config?.enabled === true;
+  $("access-enabled").checked = enabled;
+  $("access-team-domain").value = typeof config?.teamDomain === "string" ? config.teamDomain : "";
+  $("access-application-aud").value = typeof config?.applicationAud === "string" ? config.applicationAud : "";
+  setBadge("access-state", enabled ? "已启用" : "未启用");
+}
+function clearAccessConfig() {
+  accessConfigRequestToken += 1;
+  $("access-enabled").checked = false;
+  $("access-team-domain").value = "";
+  $("access-application-aud").value = "";
+  setBadge("access-state", "未读取");
+  setMessage("access-message", "");
+}
+function setAccessLoginVisible(enabled) { $("access-login").classList.toggle("hidden", enabled !== true); }
 
 async function api(path, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -28,13 +50,17 @@ async function api(path, init = {}) {
   return response;
 }
 
-function showAuthenticated(expiresAt) {
+function showAuthenticated(expiresAt, session = {}) {
   uiEpoch += 1;
+  sessionProvider = session.provider || "session";
+  sessionLogoutUrl = safeLogoutPath(session.logoutUrl);
   $("login-panel").classList.add("hidden");
   $("console").classList.remove("hidden");
-  $("session-expiry").textContent = expiresAt
-    ? `本次登录有效至 ${new Date(expiresAt).toLocaleString()}`
-    : "管理员已登录";
+  $("session-expiry").textContent = sessionProvider === "access"
+    ? "已通过 Cloudflare Access 验证"
+    : expiresAt
+      ? "本次登录有效至 " + new Date(expiresAt).toLocaleString()
+      : "管理员已登录";
 }
 
 function showLogin(message = "") {
@@ -45,6 +71,8 @@ function showLogin(message = "") {
   logDetailRequestToken += 1;
   clearTimeout(pollTimer);
   loginId = null;
+  sessionProvider = null;
+  sessionLogoutUrl = null;
   requestController?.abort();
   requestController = null;
   conversation = [];
@@ -61,6 +89,7 @@ function showLogin(message = "") {
   $("log-detail").classList.add("hidden");
   $("logs-section").classList.add("hidden");
   if ($("key-edit-dialog").open) $("key-edit-dialog").close();
+  clearAccessConfig();
   $("device-panel").classList.add("hidden");
   $("verification-link").removeAttribute("href");
   $("verification-link").textContent = "";
@@ -71,7 +100,10 @@ function showLogin(message = "") {
   $("console").classList.add("hidden");
   $("login-panel").classList.remove("hidden");
   $("admin-password").value = "";
+  $("save-access-button").disabled = false;
+  setAccessLoginVisible(false);
   setMessage("login-message", message);
+  void loadAccessAvailability();
 }
 
 async function login(event) {
@@ -86,8 +118,8 @@ async function login(event) {
     })).json();
     if (epoch !== uiEpoch) return;
     $("admin-password").value = "";
-    showAuthenticated(session.expiresAt);
-    await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings()]);
+    showAuthenticated(session.expiresAt, session);
+    await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings(), loadAccessConfig()]);
   } catch (error) {
     if (epoch !== uiEpoch) return;
     $("admin-password").value = "";
@@ -97,10 +129,13 @@ async function login(event) {
 
 async function logout() {
   const epoch = uiEpoch;
+  const provider = sessionProvider;
+  const logoutUrl = sessionLogoutUrl;
   try {
     await adminCall("/admin/session", { method: "DELETE", body: "{}" });
     if (epoch !== uiEpoch) return;
     showLogin("已退出后台。Codex 连接和 API 密钥未改变。");
+    if (provider === "access" && logoutUrl) window.location.assign(logoutUrl);
   } catch (error) {
     if (epoch !== uiEpoch) return;
     if (error.status !== 401) setMessage("session-message", error.message);
@@ -338,6 +373,7 @@ async function copyText(text, messageId) {
 }
 
 $("login-form").addEventListener("submit", login);
+$("access-form").addEventListener("submit", saveAccessConfig);
 $("logout-button").addEventListener("click", logout);
 $("status-button").addEventListener("click", checkStatus);
 $("connect-button").addEventListener("click", startDeviceLogin);
@@ -489,14 +525,60 @@ async function checkStatus() {
   }
 }
 
+async function loadAccessAvailability() {
+  const epoch = uiEpoch;
+  const requestToken = ++accessAvailabilityToken;
+  try {
+    const body = await (await api("/access/status")).json();
+    if (epoch !== uiEpoch || requestToken !== accessAvailabilityToken) return;
+    setAccessLoginVisible(body?.enabled === true);
+  } catch {
+    if (epoch === uiEpoch && requestToken === accessAvailabilityToken) setAccessLoginVisible(false);
+  }
+}
+async function loadAccessConfig() {
+  const epoch = uiEpoch;
+  const requestToken = ++accessConfigRequestToken;
+  try {
+    const body = await (await adminCall("/admin/access")).json();
+    if (epoch !== uiEpoch || requestToken !== accessConfigRequestToken) return;
+    renderAccessConfig(body);
+    setMessage("access-message", body?.updatedAt ? "上次更新：" + fmtTime(body.updatedAt) : "配置已读取。");
+  } catch (error) {
+    if (epoch === uiEpoch && requestToken === accessConfigRequestToken) setMessage("access-message", error.message);
+  }
+}
+async function saveAccessConfig(event) {
+  event.preventDefault();
+  const epoch = uiEpoch;
+  const requestToken = ++accessSaveToken;
+  accessConfigRequestToken += 1;
+  const button = $("save-access-button");
+  button.disabled = true;
+  setMessage("access-message", "正在保存…");
+  try {
+    const body = await (await adminCall("/admin/access", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: $("access-enabled").checked, teamDomain: value("access-team-domain"), applicationAud: value("access-application-aud") })
+    })).json();
+    if (epoch !== uiEpoch || requestToken !== accessSaveToken) return;
+    renderAccessConfig(body);
+    setMessage("access-message", body?.updatedAt ? "已保存：" + fmtTime(body.updatedAt) : "Access 配置已保存。");
+    await loadAccessAvailability();
+  } catch (error) {
+    if (epoch === uiEpoch && requestToken === accessSaveToken) setMessage("access-message", error.message);
+  } finally {
+    if (epoch === uiEpoch && requestToken === accessSaveToken) button.disabled = false;
+  }
+}
 async function restoreSession() {
-  const epoch = uiEpoch; $("base-url").textContent = `${location.origin}/v1`;
+  const epoch = uiEpoch; $("base-url").textContent = location.origin + "/v1";
   try {
     const session = await (await api("/admin/session")).json();
     if (epoch !== uiEpoch) return;
     if (!session.authenticated) return showLogin();
-    showAuthenticated(session.expiresAt);
-    await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings()]);
+    showAuthenticated(session.expiresAt, session);
+    await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings(), loadAccessConfig()]);
   } catch (error) { if (epoch === uiEpoch) showLogin(error.message); }
 }
 function renderKey(key) {

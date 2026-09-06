@@ -51,3 +51,5 @@
 Cloudflare 云端出口和部署、自然 token 刷新、全部目录模型逐一生成，以及函数工具的真实上游行为仍待单独验收。Chat 文本流式已有 Phase-01 真实证据；当前未识别到通用 5h 额度窗口，额外模型额度单独显示。真实目录可选不等于每个模型均已测试。
 
 环境：C:\git\OneAPI，Windows PowerShell，Node 24.15.0，npm 11.12.1；已初始化 Git，第一版归档目标为 arctan303/OneAPI，版本 v0.1.0；见 [归档记录](verification/ARCHIVE-001.md)。开发子代理按用户分工使用 gpt-5.6-sol/high，简单任务可用 gpt-5.6-luna；这不改变网关调用模型。
+
+Worker 部署与 Access 配置见 [部署说明](DEPLOYMENT.md)。Phase-02 代码、本地验证及部署前独立审查已完成；云端上传等待宿主要求的明确凭据授权，尚未创建 Worker。

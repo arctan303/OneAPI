@@ -93,14 +93,14 @@ describe("AUTH-001 administrator session and API keys", () => {
 
     await abortAllDurableObjects();
     const restored = await SELF.fetch(`${origin}/admin/session`, { headers: { Cookie: cookie! } });
-    expect(await restored.json()).toEqual({ authenticated: true, expiresAt: created.expiresAt });
+    expect(await restored.json()).toEqual({ authenticated: true, expiresAt: created.expiresAt, provider: "session", logoutUrl: null });
 
     await runInDurableObject(accountStub(), async (_instance, state) => {
       const stored = await state.storage.get<StoredAdminSession[]>("admin-sessions");
       await state.storage.put("admin-sessions", stored!.map((session) => ({ ...session, expiresAt: Date.now() - 1 })));
     });
     const expired = await SELF.fetch(`${origin}/admin/session`, { headers: { Cookie: cookie! } });
-    expect(await expired.json()).toEqual({ authenticated: false, expiresAt: null });
+    expect(await expired.json()).toEqual({ authenticated: false, expiresAt: null, provider: null, logoutUrl: null });
     expect((await SELF.fetch(`${origin}/admin/status`, { headers: { Cookie: cookie! } })).status).toBe(401);
 
     const cookies: string[] = [];
@@ -109,7 +109,7 @@ describe("AUTH-001 administrator session and API keys", () => {
       expect(await state.storage.get<StoredAdminSession[]>("admin-sessions")).toHaveLength(8);
     });
     expect(await (await SELF.fetch(`${origin}/admin/session`, { headers: { Cookie: cookies[0]! } })).json())
-      .toEqual({ authenticated: false, expiresAt: null });
+      .toEqual({ authenticated: false, expiresAt: null, provider: null, logoutUrl: null });
     expect((await (await SELF.fetch(`${origin}/admin/session`, { headers: { Cookie: cookies[8]! } })).json() as { authenticated: boolean }).authenticated)
       .toBe(true);
 
@@ -316,7 +316,7 @@ describe("AUTH-001 administrator session and API keys", () => {
     expect(loggedOut.status).toBe(204);
     expect(loggedOut.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(await (await SELF.fetch(`${origin}/admin/session`, { headers: { Cookie: cookie! } })).json())
-      .toEqual({ authenticated: false, expiresAt: null });
+      .toEqual({ authenticated: false, expiresAt: null, provider: null, logoutUrl: null });
     expect((await (await SELF.fetch(`${origin}/admin/session`, { headers: { Cookie: otherSession } })).json() as { authenticated: boolean }).authenticated)
       .toBe(true);
     expect((await SELF.fetch(`${origin}/admin/status`, { headers: bearerHeaders(admin) })).status).toBe(200);

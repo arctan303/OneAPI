@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { errorResponse, GatewayError } from "./errors";
 import type {
+  AccessConfig,
   ApiKeyPolicy,
   EncryptedValue,
   Env,
@@ -17,6 +18,11 @@ import type {
   StoredCredentials,
   UsageSnapshot
 } from "./types";
+import {
+  AccessTokenVerifier,
+  DEFAULT_ACCESS_CONFIG,
+  validateAccessConfig
+} from "./access";
 import {
   ADMIN_SESSION_COOKIE,
   accountIdFromIdToken,
@@ -67,6 +73,7 @@ const LEASES_KEY = "leases";
 const REAUTH_KEY = "reauth-required";
 const ADMIN_SESSIONS_KEY = "admin-sessions";
 const ADMIN_LOGIN_FAILURES_KEY = "admin-login-failures";
+const ACCESS_CONFIG_KEY = "access-config";
 const API_KEYS_KEY = "api-keys";
 const LEGACY_POLICY_KEY = "legacy-key-policy";
 const RATE_WINDOWS_KEY = "api-key-rate-windows";
@@ -90,9 +97,11 @@ const REQUEST_GROUP_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a
 const REQUEST_GROUP_TTL_MS = GENERATION_TIMEOUT_MS + 5_000;
 const ALARM_RETRY_MS = 60_000;
 const EMPTY_USAGE: RequestLogUsage = { inputTokens: null, outputTokens: null, totalTokens: null };
+const MAX_IMPORT_BYTES = 32 * 1024;
+const MAX_IMPORT_TOKEN_LENGTH = 12 * 1024;
 
 interface AdminAuthentication {
-  kind: "bearer" | "session";
+  kind: "bearer" | "session" | "access";
   sessionDigest?: string;
   expiresAt: number | null;
 }
@@ -194,6 +203,7 @@ export class AccountDurableObject extends DurableObject<Env> {
   private readonly activeGenerations = new Map<string, { controller: AbortController; cancel: () => void; finish: () => Promise<void>; groupId?: string }>();
   private readonly requestGroups = new Map<string, RequestGroupState>();
   private modelCatalogLoad: ModelCatalogLoad | null = null;
+  private readonly accessVerifier = new AccessTokenVerifier();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -232,7 +242,7 @@ export class AccountDurableObject extends DurableObject<Env> {
     return fetchWithLocalOutbound(this.env.ONEAPI_LOCAL_OUTBOUND, request);
   };
 
-  private async timedFetch(request: Request, timeoutMs = 10_000): Promise<Response> {
+  private async timedFetch(request: Request, timeoutMs = 10_000, maxResponseBytes = MAX_CONTROL_RESPONSE_BYTES): Promise<Response> {
     if (this.env.MOCK_UPSTREAM === "true") timeoutMs = Math.min(timeoutMs, 100);
     const controller = new AbortController();
     const abort = () => controller.abort(request.signal.reason);
@@ -242,8 +252,8 @@ export class AccountDurableObject extends DurableObject<Env> {
     try {
       const response = await this.performFetch(new Request(request, { signal: controller.signal }));
       const declared = response.headers.get("content-length");
-      if (declared && Number(declared) > MAX_CONTROL_RESPONSE_BYTES) {
-        throw new GatewayError(502, "upstream_response_too_large", "认证或模型响应超过本地 1 MiB 限制。", undefined, "server_error");
+      if (declared && Number(declared) > maxResponseBytes) {
+        throw new GatewayError(502, "upstream_response_too_large", "认证或模型响应超过服务端限制。", undefined, "server_error");
       }
       if (!response.body) return response;
       const reader = response.body.getReader();
@@ -253,9 +263,9 @@ export class AccountDurableObject extends DurableObject<Env> {
         const next = await reader.read();
         if (next.done) break;
         total += next.value.byteLength;
-        if (total > MAX_CONTROL_RESPONSE_BYTES) {
+        if (total > maxResponseBytes) {
           controller.abort(new Error("control response too large"));
-          throw new GatewayError(502, "upstream_response_too_large", "认证或模型响应超过本地 1 MiB 限制。", undefined, "server_error");
+          throw new GatewayError(502, "upstream_response_too_large", "认证或模型响应超过服务端限制。", undefined, "server_error");
         }
         chunks.push(next.value);
       }
@@ -315,6 +325,33 @@ export class AccountDurableObject extends DurableObject<Env> {
     return active;
   }
 
+  private async accessConfig(): Promise<AccessConfig> {
+    const stored = await this.ctx.storage.get<AccessConfig>(ACCESS_CONFIG_KEY);
+    if (!stored || typeof stored !== "object") return { ...DEFAULT_ACCESS_CONFIG };
+    return {
+      enabled: stored.enabled === true,
+      teamDomain: typeof stored.teamDomain === "string" ? stored.teamDomain : null,
+      applicationAud: typeof stored.applicationAud === "string" ? stored.applicationAud : null,
+      updatedAt: typeof stored.updatedAt === "number" ? stored.updatedAt : 0,
+      revision: typeof stored.revision === "number" ? stored.revision : 0
+    };
+  }
+
+  private async accessAuthentication(request: Request): Promise<AdminAuthentication> {
+    const config = await this.accessConfig();
+    const assertion = request.headers.get("Cf-Access-Jwt-Assertion");
+    if (!assertion) throw new GatewayError(401, "invalid_access_token", "缺少 Cloudflare Access 登录令牌。", undefined, "authentication_error");
+    const identity = await this.accessVerifier.verify(assertion, config, (outbound) => this.timedFetch(outbound, 5000, 64 * 1024));
+    const latest = await this.accessConfig();
+    if (
+      latest.revision !== config.revision || latest.enabled !== config.enabled ||
+      latest.teamDomain !== config.teamDomain || latest.applicationAud !== config.applicationAud
+    ) {
+      throw new GatewayError(401, "access_config_changed", "Cloudflare Access 配置已变更，请重新验证登录。", undefined, "authentication_error");
+    }
+    return { kind: "access", expiresAt: identity.expiresAt };
+  }
+
   private async sessionAuthentication(request: Request): Promise<AdminAuthentication | null> {
     const secret = cookieValue(request, ADMIN_SESSION_COOKIE);
     if (!secret) return null;
@@ -328,8 +365,17 @@ export class AccountDurableObject extends DurableObject<Env> {
       requireBearer(request, this.env.ADMIN_API_KEY, "admin");
       return { kind: "bearer", expiresAt: null };
     }
+    let accessFailure: unknown = null;
+    if (request.headers.has("Cf-Access-Jwt-Assertion")) {
+      try {
+        return await this.accessAuthentication(request);
+      } catch (error) {
+        accessFailure = error;
+      }
+    }
     const session = await this.sessionAuthentication(request);
     if (!session) {
+      if (accessFailure) throw accessFailure;
       throw new GatewayError(401, "invalid_admin_session", "管理员登录已失效，请重新登录。", undefined, "authentication_error");
     }
     return session;
@@ -338,13 +384,53 @@ export class AccountDurableObject extends DurableObject<Env> {
   private async adminSessionStatus(request: Request): Promise<Response> {
     if (bearerToken(request) !== null) {
       requireBearer(request, this.env.ADMIN_API_KEY, "admin");
-      return Response.json({ authenticated: true, expiresAt: null }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ authenticated: true, expiresAt: null, provider: "bearer", logoutUrl: null }, { headers: { "Cache-Control": "no-store" } });
     }
-    const session = await this.sessionAuthentication(request);
+    let authentication: AdminAuthentication | null = null;
+    try {
+      authentication = await this.authenticateAdmin(request);
+    } catch (error) {
+      if (!(error instanceof GatewayError) || error.status !== 401) throw error;
+    }
     return Response.json({
-      authenticated: Boolean(session),
-      expiresAt: session?.expiresAt ?? null
+      authenticated: Boolean(authentication),
+      expiresAt: authentication?.expiresAt ?? null,
+      provider: authentication?.kind ?? null,
+      logoutUrl: authentication?.kind === "access" ? "/cdn-cgi/access/logout" : null
     }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  private async getAccessConfig(): Promise<Response> {
+    const { enabled, teamDomain, applicationAud, updatedAt } = await this.accessConfig();
+    return Response.json({ enabled, teamDomain, applicationAud, updatedAt }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  private async publicAccessStatus(): Promise<Response> {
+    const config = await this.accessConfig();
+    let enabled = false;
+    if (config.enabled && config.teamDomain && config.applicationAud) {
+      try {
+        const checked = validateAccessConfig({
+          enabled: true,
+          teamDomain: config.teamDomain,
+          applicationAud: config.applicationAud
+        }, config.revision);
+        enabled = checked.teamDomain === config.teamDomain && checked.applicationAud === config.applicationAud;
+      } catch {
+        enabled = false;
+      }
+    }
+    return Response.json({ enabled }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  private async patchAccessConfig(request: Request): Promise<Response> {
+    const body = await readJsonBody(request);
+    const current = await this.accessConfig();
+    const next = validateAccessConfig(body, current.revision);
+    await this.ctx.storage.put(ACCESS_CONFIG_KEY, next);
+    this.accessVerifier.clear();
+    const { enabled, teamDomain, applicationAud, updatedAt } = next;
+    return Response.json({ enabled, teamDomain, applicationAud, updatedAt }, { headers: { "Cache-Control": "no-store" } });
   }
 
   private async createAdminSession(request: Request): Promise<Response> {
@@ -406,9 +492,102 @@ export class AccountDurableObject extends DurableObject<Env> {
       status: 204,
       headers: {
         "Cache-Control": "no-store",
-        "Set-Cookie": sessionCookie("", request.url, 0)
+        "Set-Cookie": sessionCookie("", request.url, 0),
+        ...(authentication.kind === "access" ? { "X-OneAPI-Access-Logout": "/cdn-cgi/access/logout" } : {})
       }
     });
+  }
+
+  private async importCredentials(request: Request): Promise<Response> {
+    if (new URL(request.url).protocol !== "https:") {
+      throw new GatewayError(403, "tls_required", "账户导入只允许通过 HTTPS。", undefined, "permission_error");
+    }
+    requireBearer(request, this.env.ADMIN_API_KEY, "admin");
+    const configuredSecret = this.env.ACCOUNT_IMPORT_SECRET ?? "";
+    const suppliedSecret = request.headers.get("X-OneAPI-Import-Secret") ?? "";
+    if (configuredSecret.length < 32 || configuredSecret.length > 1024) {
+      throw new GatewayError(404, "account_import_disabled", "账户导入未启用。", undefined, "permission_error");
+    }
+    if (suppliedSecret.length > 1024 || !timingSafeEqual(suppliedSecret, configuredSecret)) {
+      throw new GatewayError(401, "invalid_import_secret", "账户导入功能密钥无效。", undefined, "authentication_error");
+    }
+    const declared = request.headers.get("content-length");
+    if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_IMPORT_BYTES)) {
+      throw new GatewayError(413, "request_too_large", "账户导入请求超过 32 KiB 限制。", "body");
+    }
+    const reader = request.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    if (reader) {
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          total += next.value.byteLength;
+          if (total > MAX_IMPORT_BYTES) {
+            await reader.cancel("request too large").catch(() => undefined);
+            throw new GatewayError(413, "request_too_large", "账户导入请求超过 32 KiB 限制。", "body");
+          }
+          chunks.push(next.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    let body: Record<string, unknown>;
+    try {
+      const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("not object");
+      body = value as Record<string, unknown>;
+    } catch {
+      throw new GatewayError(400, "invalid_json", "账户导入请求必须是有效 UTF-8 JSON 对象。", "body");
+    }
+    if (
+      Object.keys(body).some((key) => !["idToken", "accessToken", "refreshToken"].includes(key)) ||
+      !["idToken", "accessToken", "refreshToken"].every((key) => {
+        const value = body[key];
+        return typeof value === "string" && value.length >= 16 && value.length <= MAX_IMPORT_TOKEN_LENGTH && !/[\s\u0000-\u001f\u007f]/.test(value);
+      })
+    ) {
+      throw new GatewayError(400, "invalid_oauth_import", "账户导入只接受有效的 idToken、accessToken 和 refreshToken。", "body");
+    }
+    const existing = await this.readCredentials();
+    if (existing) throw new GatewayError(409, "account_already_connected", "当前 Worker 已连接账户，不能导入覆盖。", undefined, "invalid_request_error");
+    const idToken = body.idToken as string;
+    const accessToken = body.accessToken as string;
+    const refreshToken = body.refreshToken as string;
+    const accountId = accountIdFromIdToken(idToken);
+    if (!accountId) throw new GatewayError(400, "invalid_oauth_import", "导入的 idToken 不含有效账户标识。", "idToken");
+    const credentials: StoredCredentials = {
+      idToken,
+      accessToken,
+      refreshToken,
+      accountId,
+      expiresAt: jwtExpirationMs(accessToken),
+      lastRefreshAt: Date.now(),
+      version: 1
+    };
+    await fetchModels((outbound) => this.timedFetch(outbound, 5000), credentials);
+    const encrypted = await this.prepareCredentials(credentials);
+    await this.ctx.storage.transaction(async (transaction) => {
+      if (await transaction.get(CREDENTIALS_KEY)) {
+        throw new GatewayError(409, "account_already_connected", "当前 Worker 已连接账户，不能导入覆盖。", undefined, "invalid_request_error");
+      }
+      const generation = ((await transaction.get<number>(GENERATION_KEY)) ?? 0) + 1;
+      await transaction.put({
+        [GENERATION_KEY]: generation,
+        [CREDENTIALS_KEY]: encrypted,
+        [CREDENTIAL_VERSION_KEY]: credentials.version
+      });
+      await transaction.delete([LOGIN_PUBLIC_KEY, LOGIN_PRIVATE_KEY, MODEL_CACHE_KEY, LEASES_KEY, REAUTH_KEY, USAGE_CACHE_KEY]);
+    });
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
   }
 
   private async storedApiKeys(): Promise<StoredApiKey[]> {
@@ -1637,6 +1816,12 @@ export class AccountDurableObject extends DurableObject<Env> {
         else this.closeRequestGroup(groupId);
         return new Response(null, { status: 204 });
       }
+      if (request.method === "GET" && url.pathname === "/access/status") {
+        return await this.publicAccessStatus();
+      }
+      if (request.method === "POST" && url.pathname === "/admin/account/import") {
+        return await this.importCredentials(request);
+      }
       let adminAuthentication: AdminAuthentication | null = null;
       let gatewayIdentity: GatewayIdentity | null = null;
       if (url.pathname.startsWith("/admin/")) {
@@ -1653,6 +1838,13 @@ export class AccountDurableObject extends DurableObject<Env> {
       }
 
       if (request.method === "GET" && url.pathname === "/admin/status") return this.status();
+      if (request.method === "GET" && url.pathname === "/admin/access") return await this.getAccessConfig();
+      if (request.method === "PATCH" && url.pathname === "/admin/access") return await this.patchAccessConfig(request);
+      if (request.method === "GET" && url.pathname === "/admin/access/login") {
+        const access = await this.accessAuthentication(request);
+        if (access.kind !== "access") throw new GatewayError(401, "invalid_access_token", "Cloudflare Access 登录无效。", undefined, "authentication_error");
+        return Response.redirect(new URL("/", request.url).href, 303);
+      }
       if (request.method === "GET" && url.pathname === "/admin/usage") {
         if ([...url.searchParams.keys()].some((key) => key !== "refresh") || !["", "true", "false"].includes(url.searchParams.get("refresh") ?? "")) {
           throw new GatewayError(400, "invalid_request", "usage 只接受 refresh=true|false。", "refresh");

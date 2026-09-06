@@ -43,7 +43,8 @@ export function createNodeOutbound(fetchImpl = nodeFetch, trace = process.env.ON
   let sequence = 0;
   return async (request) => {
     const url = new URL(request.url);
-    const expectedMethod = allowedUpstream.get(url.hostname)?.get(url.pathname);
+    const accessCerts = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/.test(url.hostname) && url.pathname === "/cdn-cgi/access/certs";
+    const expectedMethod = accessCerts ? "GET" : allowedUpstream.get(url.hostname)?.get(url.pathname);
     if (
       url.protocol !== "https:" ||
       url.port !== "" ||

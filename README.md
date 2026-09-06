@@ -23,3 +23,5 @@ npm run dev:node
 归档不包含真实凭据、OAuth 数据库、调用记录、截图或临时测试数据。在另一台机器使用需要初始化并自行授权账号。示例和测试配置只含公开测试值。
 
 详见[使用说明](docs/README.md)、[接口与限制](docs/API.md)、[真实验收](docs/verification/LIVE-001.md)和[独立复核](docs/verification/LIVE-001-review.md)。历史文档中提及的本机截图和 PID 只描述当时证据，不作为仓库附件或当前进程信息。
+
+Worker 部署与 Access 配置见 [部署说明](docs/DEPLOYMENT.md)。Phase-02 代码、本地验证及部署前独立审查已完成；云端上传等待宿主要求的明确凭据授权，尚未创建 Worker。

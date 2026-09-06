@@ -8,6 +8,17 @@ export interface Env {
   ALLOW_TEST_HOSTS?: string;
   MOCK_INSTANCE_NONCE?: string;
   ONEAPI_LOCAL_OUTBOUND?: Fetcher;
+  PUBLIC_ORIGIN?: string;
+  WORKER_ORIGIN?: string;
+  ACCOUNT_IMPORT_SECRET?: string;
+}
+
+export interface AccessConfig {
+  enabled: boolean;
+  teamDomain: string | null;
+  applicationAud: string | null;
+  updatedAt: number;
+  revision: number;
 }
 
 export interface StoredCredentials {

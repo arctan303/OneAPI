@@ -1,13 +1,35 @@
-# Phase-02：隔离Cloudflare验证
+# Phase-02：Cloudflare Worker 部署与 Access 管理登录
 
-状态：授权已记录，尚未开始、未创建资源、未部署。依据DEC-010。depends_on：Phase-01本地功能与R2验收，以及对目标Cloudflare账号/资源清单的实际核对。
+状态：实施完成；本地验证通过；部署前 R2 独立审查通过；云部署被宿主敏感出站审批阻止，等待用户明确授权。基线 `7ec814e`，2026-09-07。
 
-目标：验证纯Worker端的设备码登录、官方模型/额度连通、标准key调用和存储行为。允许创建单独测试Worker及必要的测试D1/KV/相关绑定；不因有授权就全部创建。非目标：修改/接管/删除已有Worker、数据库、KV、域名、路由或Access应用；不把Node本地成功当Worker成功。
+## 目标与授权
 
-隔离：先只读列资源，选择未占用测试名称并记录本次创建的每个资源ID；使用独立配置、Secret和绑定。业务测试只作用于这份清单。管理门禁/Access与机器API路由需同时验证，不能让API key调用被交互登录页拦住。
+用户明确要求开始部署，目标 `api.arcinks.com`，Worker 名称沿用仓库名（部署标识采用 `oneapi`）。允许在自己的新 Worker 复用本地 Demo 已登录的 Codex 账号；若迁移需要人工授权，保留已完成部署并停在该步骤等待用户。允许新建必要存储，禁止影响其他现有服务。
 
-登录：先验证设备码协议与Secret存储，再在需要人工步骤时通知用户完成官方授权。本地OAuth不自动复制至云端，不清空或撤销本地连接；用户明确要求迁移时再确定方式。
+depends_on：Phase-01 本地能力、真实两协议和思考程度验收、独立审查通过。supersedes：原 Phase-02 仅设备码登录、不复制本地 OAuth、不绑定域名的默认限制，由本轮明确授权替代。
 
-风险R2：部署资源/凭据/持久化与授权边界。测试前校验所用ID均属新增测试资源；行为证据与fresh review覆盖改变的风险。Cloudflare原生出站此前403是独立待解决问题；若有限对照仍失败，记录真实响应和受影响能力阻碍，不引入未讨论外部常驻服务伪装纯Worker成功。
+## 范围与预期行为
 
-验收：隔离资源可回读；管理员门禁、Codex授权、官方目录与用量、key权限与日志持久化、两种协议有相称证据；原资源保持不变。部署/验证/审查状态分别记录。需要清理时仅处理登记的本次测试资源，保留用户已有数据。
+- 后台配置 Team Domain、Application AUD 和启用开关。有效 Access JWT 为唯一管理员；验证签名、issuer、audience、时间边界，固定可信 JWKS 地址。
+- 保留管理员 key 登录及 Bearer 管理；Access 边缘卡住时用户在 Cloudflare 控制台关闭门禁，不另设恢复域名。
+- `/v1/*` 继续只接受调用 key。Access 门禁仅配置管理路径，不让机器调用跳转登录。
+- 独立云配置、加密密钥和 DO；只迁移 Demo 账号凭据，不复制本地会话、日志或自建 key。管理员口令复用方便用户恢复。导入仅 HTTPS、管理员 Bearer 和临时额外导入 secret，空账号才允许；成功关闭导入功能。
+- 仓库提供部署、Secrets、域名、Access 手工配置、迁移、回滚和实测限制说明。
+
+## 实施与验收
+
+1. 只读清单确认 Worker 名及域名冲突；域名绑定禁止替换已有 DNS/Worker。
+2. Sol/high 实施 Access 后端/导入与鉴权测试；Luna/high 实施 UI；主会话负责部署脚本/说明和集成。
+3. 鉴权、CSRF、配置失效、API key 隔离、导入保护测试及 fresh R2 审查通过，再部署。
+4. 回读新资源；迁移后有限查询官方目录/额度；成功再用新 key 测试 gpt-5.5 两协议及思考程度。403 等失败明确记录，禁止以 Node 或 Mock 代替纯 Worker 证据。
+5. 验证已有服务未改；记录资源/版本、登录状态及用户是否需要操作。迁移失败不无限重试。
+
+风险 R2：鉴权与凭据迁移可能允许越权或泄漏订阅访问能力；需验签/失效/CSRF/Secret 不落输出/导入关闭证据。不额外创建 D1/KV，沿用 SQLite DO 架构。
+
+## 已核对事实
+
+Wrangler 已登录。现有 Worker 为 arcinks-com、blog、mail、music-arctan-top，无 oneapi。无 api.arcinks.com Worker Custom Domain、无 zone Worker routes。DNS 查询权限不足（403），不能据此认为 DNS 空闲。Wrangler 非 TTY 发布会开启覆盖，故配置不自动绑定路由，改用 API changeset 预检和覆盖标志 false 的绑定。Access 应用列表为空。只读清单在忽略目录 output/phase02/inventory.json，不含 token。
+
+## 当前恢复检查点
+
+代码/部署文档与本地68项测试、浏览器、运行器、构建已通过；fresh reviewer通过，见 [验证](../verification/PHASE-02.md) / [审查](../verification/PHASE-02-review.md)。Secrets上传命令在执行前被自动审批拒绝，无云资源创建、无凭据上传。用户对指定Secrets和本地OAuth向oneapi/api.arcinks.com的上传授权问题仍待回答。获得后先核对云资源清单未变，复用已审代码证据，继续Secrets→Worker→无覆盖域名→有限迁移/验收；无法迁移按用户要求停等。

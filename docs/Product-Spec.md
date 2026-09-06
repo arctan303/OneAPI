@@ -1,6 +1,6 @@
 # Product Spec：个人 Codex 网关 Demo
 
-版本：本地扩展（v0.1.0 之后）；日期：2026-09-07。原版 LIVE-001 已通过；Phase-01 本地扩展已完成，真实两协议/显式思考程度/官方额度/后台操作通过，fresh R2 独立复核通过。证据见 PHASE-01；云端未部署。
+版本：本地扩展（v0.1.0 之后）；日期：2026-09-07。原版 LIVE-001 已通过；Phase-01 本地扩展已完成，真实两协议/显式思考程度/官方额度/后台操作通过，fresh R2 独立复核通过。证据见 PHASE-01；Phase-02 Access/部署脚本已实现并通过本地验证与部署前独立审查；云端上传等待明确凭据授权，尚未部署。
 
 ## 目标与有效决定
 
@@ -18,6 +18,7 @@
 | DEC-008 | 登录后就是唯一管理员，能执行全部后台操作；后台创建和撤销 API 密钥，第三方用密钥和 Base URL 调用；不做角色划分或用户管理 | 用户 2026-09-06 明确要求，有效；AUTH-001 实现与验证完成、独立聚焦复核通过 |
 | DEC-010 | 先完成本地扩展，再允许部署独立测试Worker及必要测试D1/KV等资源；不得影响已有资源 | 用户本轮明确授权，有效；不等同于现有生产资源修改授权 |
 | DEC-011 | 官方账号七天/5h窗口及重置时间；默认精简日志，完整正文可选；管理员按key查看；加入key有效期/停用与限速/并发 | 用户本轮明确确认，有效；Phase-01 实施，参数默认值见EXPLORE-001 |
+| DEC-013 | 后台两参数启用 Access、管理员 key 兜底；直接部署 oneapi 到 api.arcinks.com，允许安全复用 Demo 自身账号，人工授权无法避免时停下等待 | 用户 2026-09-07 明确授权；替代 Phase-02 原默认不迁移/不绑定域名限制，不允许覆盖其他资源 |
 | DEC-012 | 补齐每次请求的思考程度、官方目录可用档位/默认值与后台选择框；以当前账号实际能力为准 | 用户 2026-09-07 追加，纳入 Phase-01 / REQ-12；不改变每 key 模型权限 |
 | DEC-009 | 接受先用本机 Node.js 跑通同一套后台与 API，再单独解决 Cloudflare 部署；真实模型测试优先 gpt-5.5，gpt-5.6-luna 以账户目录为准 | 用户 2026-09-07 明确确认；LIVE-001 实施与本地真实验证完成，替代本地运行也必须仅使用 Worker 出站的限制，不改变 DEC-003 云端目标 |
 
@@ -35,7 +36,7 @@ DEC-007/008 替代页面反复填写管理员/调用密钥的交互。仅一个�
 
 本地实施默认值：复用已有 `ADMIN_API_KEY` 作为首次登录口令，建立 7 天可撤销 HttpOnly/SameSite 会话，刷新和重新打开能恢复；不修改现有 Secret 或 OAuth 凭据。管理脚本原有管理员 Bearer 保持兼容。内置模型测试直接接受管理员会话；第三方 `/v1/*` 使用创建的 API key 或兼容的原 `GATEWAY_API_KEY`，不需要后台登录 Cookie。新密钥随机生成，明文只在创建时返回，列表仅元数据/掩码，可撤销。
 
-线上管理入口未来交给 [Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)，本次不实现或部署线上门禁。机器调用不能被交互式登录页破坏，线上 API 路由策略留到部署设计；Access 也不能解决 ChatGPT 上游 403。
+线上管理入口由 Phase-02 实施 [Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)：后台两参数 Team Domain/Application AUD 及开关，有效 JWT 即管理员；保留 ADMIN_API_KEY 登录。用户在 CF 控制台关闭卡住的门禁，不另设恢复域名。/v1/* 不套交互式门禁。Access 不能解决 ChatGPT 上游 403。
 
 实现、迁移、验收与风险见 [AUTH-001 任务](tasks/AUTH-001.md)。下文为更新后的预期行为；本地实现与 Mock/SDK/浏览器验证已完成，独立聚焦复核通过，当前真实上游验收以 LIVE-001 为准，云端仍未验证。
 ## LIVE-001：本地真实调用（实施与本地真实验证完成）
@@ -120,3 +121,9 @@ Cloudflare 云端出口、Secret 配置、费用与真实部署是后续单独�
 ## Phase-01 本地扩展
 
 首版已归档为 v0.1.0（54631e0），标签保持不变。Phase-01 后续扩展见 [接口说明](API.md) 和 [验证记录](verification/PHASE-01.md)。已确认扩展、实施默认值和有限验证边界见 [EXPLORE-001](tasks/EXPLORE-001.md)。日志仅管理员查看、精简默认、正文可选；协议范围为Chat Completions与Responses；先本地完成，再按DEC-010隔离云端测试。
+
+## Phase-02 / REQ-13、REQ-14（实现完成，真实云验收待执行）
+
+REQ-13 / AC-13：后台配置 Access 两参数与开关；合法 JWT 进入管理员，伪造/过期/错误 audience/issuer 被拒绝，跨站写拒绝；关闭/换配置立即使旧 Access 凭证失效；管理员 key 保留；普通 API key 无管理权。CF 门禁仅管理路径，API 调用不跳登录。
+
+REQ-14 / AC-14：部署到新 oneapi Worker 并绑定 api.arcinks.com；域名冲突拒绝覆盖。仅迁移本地 Demo OAuth 到新空账号，通过 HTTPS 双重管理员/临时导入凭证，加密保存且不打印 token；完成关闭导入。保留本地状态。真实模型、额度、两协议、思考程度需 Worker 证据；如无法迁移则等待用户。部署和回滚文档可复现。

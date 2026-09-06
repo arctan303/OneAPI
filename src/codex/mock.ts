@@ -10,6 +10,8 @@ const control: MockControl = {
   persistDelayMs: 0,
   loginStateDelayMs: 0
 };
+let accessJwks: Record<string, unknown> | null = null;
+let accessJwksDelayMs = 0;
 const stats = {
   devicePoll: 0,
   refresh: 0,
@@ -26,6 +28,14 @@ const stats = {
   lastAuthorizationIsBearer: false,
   lastAccountHeaderPresent: false
 };
+
+export function configureMockAccessJwks(value: Record<string, unknown> | null): void {
+  accessJwks = value;
+}
+
+export function configureMockAccessJwksDelay(delayMs: number): void {
+  accessJwksDelayMs = delayMs;
+}
 
 export function configureMockUpstream(next: Partial<typeof control>): void {
   Object.assign(control, next);
@@ -52,6 +62,8 @@ export function resetMockUpstream(): void {
   stats.lastClientVersion = "";
   stats.lastAuthorizationIsBearer = false;
   stats.lastAccountHeaderPresent = false;
+  accessJwks = null;
+  accessJwksDelayMs = 0;
 }
 
 export function mockUpstreamStats(): Readonly<typeof stats> {
@@ -199,6 +211,11 @@ function sseResponse(body: Record<string, unknown>, signal: AbortSignal): Respon
 
 export async function mockUpstreamFetch(request: Request): Promise<Response> {
   const url = new URL(request.url);
+  if (url.hostname.endsWith(".cloudflareaccess.com") && url.pathname === "/cdn-cgi/access/certs" && url.search === "") {
+    if (request.method !== "GET" || request.redirect !== "manual") return Response.json({ error: "unsafe access jwks request" }, { status: 400 });
+    if (accessJwksDelayMs > 0) await delay(accessJwksDelayMs, request.signal);
+    return accessJwks ? Response.json(accessJwks) : Response.json({ error: "missing mock jwks" }, { status: 404 });
+  }
   if (url.href.startsWith(`${AUTH_BASE_URL}/api/accounts/deviceauth/usercode`)) {
     return Response.json({ device_auth_id: "mock-device-auth-id", user_code: "MOCK-CODE", interval: "0" });
   }

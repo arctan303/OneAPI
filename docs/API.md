@@ -94,3 +94,13 @@ modelAccess 为 `{"mode":"all","models":[]}` 或 `{"mode":"allowlist","models":[
 - node scripts/verify-extensions.mjs --live --read-only：仅管理员状态与一次强制官方额度读取，不生成、不改 key 和日志设置。
 
 真实测试只打印结构化结果、用量和长度，不打印凭据或请求响应全文。测试产生的精简/已启用正文日志遵守保留策略，不清除用户历史数据。
+
+## Cloudflare Access 与账号迁移（Phase-02）
+
+- `GET /access/status`：公开，只返回 `{enabled}`，不公开 Team Domain/AUD。
+- `GET/PATCH /admin/access`：管理员读取/保存 `{enabled,teamDomain,applicationAud}`；返回另含 updatedAt。启用必须填写两个参数。
+- `GET /admin/access/login`：受 Cloudflare Access 保护的同源登录入口，通过管理员身份校验后跳回根页面；不接受外部 redirect 参数。
+- `GET /admin/session`：新增 provider（access/session/bearer/null）及 logoutUrl；Access 每次请求验签，不换成长效管理员 Cookie。
+- `POST /admin/account/import`：仅部署时临时启用；HTTPS、管理员 Bearer 及 X-OneAPI-Import-Secret 同时有效；最大 32 KiB，body 严格为 idToken/accessToken/refreshToken。目标账号必须为空，固定官方目录验证成功才加密保存；成功 204，关闭后 404，已有账号 409。没有导出接口。
+
+普通 API key 不能调用上述管理接口。Access 只用于管理，不代替 /v1/* 调用 key；部署和门禁恢复见 [部署说明](DEPLOYMENT.md)。

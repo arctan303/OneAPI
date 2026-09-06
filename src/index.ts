@@ -14,6 +14,34 @@ function isLoopback(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
 }
 
+export function configuredOrigin(value: string | undefined, label: string): string | null {
+  if (!value) return null;
+  if (value.length > 512 || value.trim() !== value) {
+    throw new GatewayError(500, "invalid_public_origin", label + " 配置格式无效。", undefined, "server_error");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new GatewayError(500, "invalid_public_origin", label + " 配置格式无效。", undefined, "server_error");
+  }
+  if (
+    parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port ||
+    (parsed.pathname !== "" && parsed.pathname !== "/") || parsed.search || parsed.hash ||
+    (value !== parsed.origin && value !== parsed.origin + "/")
+  ) {
+    throw new GatewayError(500, "invalid_public_origin", label + " 必须是无路径、端口、查询或凭据的 HTTPS origin。", undefined, "server_error");
+  }
+  return parsed.origin;
+}
+
+function hostAllowed(url: URL, env: Env): boolean {
+  if (isLoopback(url.hostname)) return true;
+  const publicOrigin = configuredOrigin(env.PUBLIC_ORIGIN, "PUBLIC_ORIGIN");
+  const workerOrigin = configuredOrigin(env.WORKER_ORIGIN, "WORKER_ORIGIN");
+  return url.protocol === "https:" && (url.origin === publicOrigin || url.origin === workerOrigin);
+}
+
 function sameOrigin(value: string, expected: string): boolean {
   try {
     const parsed = new URL(value);
@@ -50,7 +78,8 @@ function enforceAdminBrowserBoundary(request: Request, url: URL): void {
   const mutation = ["POST", "PUT", "PATCH", "DELETE"].includes(request.method);
   if (!mutation) return;
   const login = request.method === "POST" && url.pathname === "/admin/session";
-  if ((login || hasAdminSessionCookie(request)) && origin === null) {
+  const accessAssertion = request.headers.has("Cf-Access-Jwt-Assertion") && !request.headers.has("Authorization");
+  if ((login || hasAdminSessionCookie(request) || accessAssertion) && origin === null) {
     throw new GatewayError(403, "origin_required", "使用管理会话的写操作必须来自当前页面同源。", undefined, "permission_error");
   }
   const contentType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
@@ -112,10 +141,10 @@ export default {
         const stub = env.ACCOUNT.get(id);
         response = secureHeaders(await stub.fetch(request), true);
       } else {
-        if (env.ALLOW_TEST_HOSTS !== "true" && !isLoopback(url.hostname)) {
-          throw new GatewayError(403, "host_not_allowed", "本地 Demo 只接受 loopback Host。", undefined, "permission_error");
+        if (env.ALLOW_TEST_HOSTS !== "true" && !hostAllowed(url, env)) {
+          throw new GatewayError(403, "host_not_allowed", "请求 Host 未列入允许的公开 HTTPS origin。", undefined, "permission_error");
         }
-        const protectedRoute = url.pathname.startsWith("/admin/") || url.pathname.startsWith("/v1/");
+        const protectedRoute = url.pathname.startsWith("/admin/") || url.pathname.startsWith("/v1/") || url.pathname === "/access/status";
         if (url.pathname.startsWith("/admin/")) {
           enforceAdminBrowserBoundary(request, url);
         }

@@ -14,7 +14,14 @@
     "build": "wrangler deploy --dry-run --outdir dist",
     "smoke:live": "node scripts/live-session-smoke.mjs",
     "test:extensions": "node scripts/verify-extensions.mjs",
-    "smoke:extensions": "node scripts/verify-extensions.mjs --live"
+    "smoke:extensions": "node scripts/verify-extensions.mjs --live",
+    "build:worker": "wrangler deploy --config wrangler.worker.jsonc --dry-run --outdir dist/worker",
+    "deploy:worker": "wrangler deploy --config wrangler.worker.jsonc",
+    "worker:secrets:prepare": "node scripts/prepare-worker-secrets.mjs",
+    "worker:secrets:upload": "node scripts/upload-worker-secrets.mjs",
+    "worker:domain": "node scripts/bind-worker-domain.mjs",
+    "worker:import": "node scripts/migrate-account-to-worker.mjs",
+    "smoke:worker": "node scripts/verify-worker-live.mjs"
   },
   "dependencies": {
     "openai": "7.10.0"

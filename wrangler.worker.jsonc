@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "oneapi",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-06",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ACCOUNT",
+        "class_name": "AccountDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "AccountDurableObject"
+      ]
+    }
+  ],
+  "secrets": {
+    "required": [
+      "ADMIN_API_KEY",
+      "GATEWAY_API_KEY",
+      "TOKEN_ENCRYPTION_KEY"
+    ]
+  },
+  "account_id": "ed6c2f7b12e4f0659cf8b70077fa649b",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "PUBLIC_ORIGIN": "https://api.arcinks.com",
+    "WORKER_ORIGIN": "https://oneapi.12213443th.workers.dev"
+  },
+  "routes": []
+}
