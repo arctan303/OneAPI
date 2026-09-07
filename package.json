@@ -1,6 +1,6 @@
 {
   "name": "oneapi",
-  "version": "0.2.0-dev.3",
+  "version": "0.2.0-dev.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "dev:ui": "vite --config vite.config.mjs",
     "dev:node": "node scripts/dev-local.mjs",
     "test:dev-node": "node scripts/verify-dev-local.mjs",
+    "test:codex": "vitest run test/codex-provider.test.ts test/gateway.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:sdk": "node scripts/sdk-compat.mjs",
@@ -45,6 +46,7 @@
     "esbuild": "0.28.1",
     "miniflare": "5.20260903.0-alpha",
     "typescript": "7.0.2",
+    "vite": "8.2.2",
     "vitest": "4.1.0",
     "wrangler": "4.129.0"
   },

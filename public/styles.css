@@ -170,10 +170,13 @@ legend { padding: 0 5px; color: var(--muted); font-size: 12px; }
 .quota-sub { font-size: 11px; margin-top: 2px; }
 .quota-progress-box { margin: 10px 0 8px; }
 .quota-progress-track { width: 100%; height: 7px; background: var(--soft); border-radius: 999px; overflow: hidden; }
-.quota-progress-fill { height: 100%; border-radius: 999px; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s; }
-.bar-good { background: #176b52; }
-.bar-warning { background: #d97706; }
-.bar-danger { background: #dc2626; }
+.quota-progress-fill { display: block; width: 100%; height: 100%; appearance: none; border: 0; border-radius: 999px; overflow: hidden; background: transparent; }
+.quota-progress-fill::-webkit-progress-bar { background: transparent; }
+.quota-progress-fill::-webkit-progress-value { background: var(--quota-bar-color); transition: background-color 0.3s; }
+.quota-progress-fill::-moz-progress-bar { background: var(--quota-bar-color); transition: background-color 0.3s; }
+.bar-good { --quota-bar-color: #176b52; }
+.bar-warning { --quota-bar-color: #d97706; }
+.bar-danger { --quota-bar-color: #dc2626; }
 .quota-stat-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
 .stat-caption { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .quota-stat-row .quota-number { margin-top: 2px; line-height: 1.1; }
@@ -237,6 +240,9 @@ legend { padding: 0 5px; color: var(--muted); font-size: 12px; }
 .log-body-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .log-info-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; background: white; border: 1px solid var(--line); border-radius: 6px; }
+.text-muted { color: var(--muted); }
+.text-accent { color: var(--accent); }
+.text-danger { color: var(--danger); }
 
 .log-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .log-actions button { padding: 5px 10px; font-size: 12px; }
@@ -432,4 +438,3 @@ legend { padding: 0 5px; color: var(--muted); font-size: 12px; }
   color: var(--danger) !important;
   font-weight: 600;
 }
-

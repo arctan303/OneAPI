@@ -82,11 +82,11 @@ DEC-007/008 替代页面反复填写管理员/调用密钥的交互。仅一个�
 
 | 接口 | 首版支持 | 不支持与边界 |
 | --- | --- | --- |
-| `GET /v1/models` | 从已登录账户的 Codex 模型目录转换为 `object: list` 与 `data`；只返回该key允许的交集 | 不编造模型或额度；目录不可用时给明确错误，可在 Demo 手动输入模型 ID 做诊断，不能伪装模型目录成功 |
-| `POST /v1/responses` | `model`、文本 `input`、`instructions`、`stream`；文本消息、函数调用及结果项；函数 `tools` 与可映射的 `tool_choice` | 只接受显式无持久化语义；拒绝 `store:true`、`background:true`、`previous_response_id`、托管工具等。客户端携带完整上下文 |
-| `POST /v1/chat/completions` | `model`、`messages`、`stream`；system/developer/user/assistant/tool 消息；函数 `tools` 与 `tool_choice`；可选流末 usage | `n>1`、结构化输出、音视频等未实现功能拒绝；历史与工具消息转换保持语义 |
+| `GET /v1/models` | 从已登录账户的 Codex 模型目录生成标准 `object/data`；Codex 携带 `client_version` 查询时同一响应附加原样 `models` 目录；两者只返回该 key 允许的同一交集 | 不编造模型或额度；未知查询参数忽略；已知 `client_version` 非法时明确错误；目录不可用时给明确错误 |
+| `POST /v1/responses` | 标准子集保持兼容；当前 Codex 原生 `additional_tools`、消息/推理/函数与自定义工具项、`include`、`prompt_cache_key`、`text`、`client_metadata` 及必要元数据头有界透传 | 未知顶层字段记录后忽略且不透传；拒绝 `store:true`、`background:true`、`previous_response_id`、`conversation` 与未实现的托管工具等状态语义；客户端携带完整上下文 |
+| `POST /v1/chat/completions` | `model`、`messages`、`stream`；system/developer/user/assistant/tool 消息；函数 `tools` 与 `tool_choice`；可选流末 usage | 未知顶层字段记录后忽略且不透传；历史与工具消息转换保持语义；未实现的已知状态型能力仍明确拒绝 |
 
-`reasoning.effort` / `reasoning_effort` 按当前账号官方模型目录实际 supported_reasoning_levels 接受，解析范围不固定在旧版枚举；缺失或过期能力可自动有限更新一次目录。未指定时省略上游 effort，维持上游默认。模型目录保留标准字段，附加 OneAPI 自定义 capabilities.reasoning（supported_efforts、default_effort）；不是 Platform 标准 /v1/models 字段。不新增每 key 思考程度权限或固定默认。PARAM-COMPAT-001（用户确认，已实现、本地验证并随v0.2.0-dev.3发布）替代原全部拒绝规则：Chat的`max_tokens`/`max_completion_tokens`、Responses的`max_output_tokens`及两协议`temperature`/`top_p`校验后默认兼容忽略，基础调用日志记录未生效字段名，并用响应头告知；不声称上限或采样生效。仅限该明确集合；工具、结构化输出、存储及其他未知字段继续明确400。参数含义与降级边界见任务及API兼容矩阵。
+`reasoning.effort` / `reasoning_effort` 按当前账号官方模型目录实际 supported_reasoning_levels 接受，解析范围不固定在旧版枚举；缺失或过期能力可自动有限更新一次目录。未指定时省略上游 effort，维持上游默认。标准模型条目附加 OneAPI `capabilities.reasoning`；Codex 查询另含同源、同权限过滤的上游原始模型对象，以保留客户端解码所需能力字段。CODEX-PROVIDER-001（用户 2026-09-08 确认）替代 PARAM-COMPAT-001 的“仅明确集合可忽略、其他未知字段 400”规则：生成请求未知顶层字段校验到 JSON 边界后记录字段名并忽略，绝不把未知值透传上游；已知兼容标量仍按既有范围校验后忽略；已知状态、持久化或托管执行语义不属于未知字段，未实现时继续明确拒绝。参数含义、元数据白名单与降级边界见任务及 API 兼容矩阵。
 
 非流式 Responses 返回完整 Response 对象；Chat Completions 返回 `choices[].message` 与明确的 `finish_reason`。工具参数保持 JSON 字符串，不以字符串拼接伪造对象；usage 有上游依据才返回，不能把未知写成真实零消耗。
 

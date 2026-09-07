@@ -1,14 +1,14 @@
 # OneAPI
 
-> v0.2.0-dev.3 修复 Access 登录返回与 Spark 目录，并增加常见请求参数兼容。保留启动参数、配置向导与分区后台。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](docs/NETWORK.md)。
+> v0.2.0-dev.4 完整接通 Codex 0.153.4 自定义 Responses provider，并合入分区后台、额度卡片、模型/key/日志交互优化。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](docs/NETWORK.md)。
 
-当前预发布：[v0.2.0-dev.3](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.3)。首次安装请下载 Release 的 `oneapi-server-*.tar.gz` 附件。
+当前预发布：[v0.2.0-dev.4](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.4)。首次安装请下载 Release 的 `oneapi-server-*.tar.gz` 附件。
 
 个人 Codex 订阅网关。当前主路径是轻量单服务器：一个 Node.js 进程、一个业务 SQLite 数据库和原有静态管理后台/API。生产运行不依赖 Wrangler、Miniflare、workerd、Docker、Redis、D1 或 KV；Cloudflare Access 管理登录和管理员 API key 兜底继续保留。
 
 首次安装预发布包请先阅读 [安装教程](docs/INSTALL.md)；已安装环境的 HTTPS、systemd 和升级边界见 [部署说明](docs/DEPLOYMENT.md)。
 
-原生服务器已在本机通过真实账号、模型目录、官方额度、Responses/Chat 流式与日志验收，独立 R2 复核通过。预发布包体积以 [v0.2.0-dev.3 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.3) 附件为准；Node.js 本身另行安装。详见 [SERVER-001 验收](docs/verification/SERVER-001.md) 和 [参考项目调查](docs/verification/SERVER-TRANSITION-worker-research.md)。远端服务器和真实 Access 策略尚未部署验证。
+原生服务器已在本机通过真实账号、Codex 0.153.4 原生模型目录/文本/工具续轮、Responses/Chat SDK、官方额度与后台浏览器验收。预发布包体积以 [v0.2.0-dev.4 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.4) 附件为准；Node.js 本身另行安装。远端服务器和真实 Access 策略不会自动更新。
 
 ## 单服务器快速开始
 
@@ -24,6 +24,24 @@ npm start
 `npm run build` 当前也指向 server 构建；`npm run start` 会运行 `dist/server/oneapi.mjs`，并从项目根目录的 `.env` 读取配置。setup 默认生成 `.env`，已有文件只报告 unchanged，不覆盖，也不打印凭据。生产环境可把同一脚本复制到发布包后用 `--env-path` 写入受保护的环境文件，详见 [部署说明](docs/DEPLOYMENT.md) 和 [部署模板](deploy/README.md)。
 
 默认后台地址是 http://127.0.0.1:8787/，API Base URL 是 `http://127.0.0.1:8787/v1`。管理员使用 `ADMIN_API_KEY` 登录；第三方客户端使用后台创建的 API key。首次连接账号时，在官方网页完成设备码授权；已有账号可直接加载模型。本地迁移的账号已验证可直接使用；迁往其他服务器后应验证该服务器的上游出口。
+
+## Codex 原生接入
+
+先把后台创建的 OneAPI 调用 key 保存到本机环境变量 `ONEAPI_API_KEY`，再在 Codex `config.toml` 中加入：
+
+```toml
+model = "gpt-5.6-sol"
+model_provider = "oneapi"
+
+[model_providers.oneapi]
+name = "OneAPI"
+base_url = "http://127.0.0.1:8787/v1"
+env_key = "ONEAPI_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+```
+
+dev.4 已按 Codex 0.153.4 验证模型目录、原生 Responses 输入、流式文本和工具续轮。未来客户端新增的未知顶层参数会被记录并忽略，不会转发上游；状态存储、后台任务和托管工具等未实现语义仍明确拒绝。详细边界见 [API 兼容矩阵](docs/API.md)。
 
 ## 已有账号先迁移
 

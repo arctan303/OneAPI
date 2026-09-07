@@ -245,6 +245,16 @@ describe("gateway Worker + Durable Object", () => {
     const models = await SELF.fetch("https://example.com/v1/models", { headers: auth(gateway) });
     expect(models.status).toBe(200);
     expect((await models.json() as { data: Array<{ id: string }> }).data[0]?.id).toBe("gpt-mock");
+    const codexModels = await SELF.fetch("https://example.com/v1/models?client_version=0.153.4&future_catalog_option=1", { headers: auth(gateway) });
+    expect(codexModels.status).toBe(200);
+    const codexCatalog = await codexModels.json() as { data: Array<{ id: string }>; models: Array<Record<string, unknown>> };
+    expect(codexCatalog.models[0]).toMatchObject({
+      slug: "gpt-mock",
+      shell_type: "shell_command",
+      base_instructions: "You are a test coding agent.",
+      future_catalog_field: { preserved: true }
+    });
+    expect(codexCatalog.data[0]?.id).toBe("gpt-mock");
 
     const response = await SELF.fetch("https://example.com/v1/responses", { method: "POST", headers: auth(gateway), body: JSON.stringify({ model: "gpt-mock", input: "hello" }) });
     expect(response.status).toBe(200);
@@ -288,6 +298,31 @@ describe("gateway Worker + Durable Object", () => {
     });
     expect(response.status).toBe(200);
     expect(mockUpstreamStats()).toMatchObject({ codexRequests: 2, lastClientVersion: "" });
+  });
+
+  it("forwards reviewed Codex metadata headers through the authenticated gateway path", async () => {
+    await connect();
+    const headers = new Headers(auth(gateway));
+    headers.set("Cookie", "client-secret=must-not-forward");
+    headers.set("X-Codex-Beta-Features", "remote_compaction_v2");
+    headers.set("X-Codex-Window-Id", "window-integration");
+    headers.set("X-Future-Header", "must-not-forward");
+    const response = await SELF.fetch("https://example.com/v1/responses", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "gpt-mock",
+        input: [{ type: "additional_tools", tools: [] }, { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] }],
+        client_metadata: { "x-codex-installation-id": "install-integration" }
+      })
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(mockUpstreamStats()).toMatchObject({
+      lastCodexBetaFeatures: "remote_compaction_v2",
+      lastCodexWindowId: "window-integration",
+      lastCookiePresent: false
+    });
   });
 
   it("bounds upstream diagnostic JSON and ignores arbitrary detail text", async () => {
@@ -398,17 +433,31 @@ describe("gateway Worker + Durable Object", () => {
     expect(second.status).toBe(200);
   });
 
-  it("rejects unknown and unsupported parameters instead of silently dropping them", async () => {
+  it("ignores unknown parameters but rejects unsupported stateful semantics", async () => {
     await connect();
     for (const body of [
       { model: "gpt-mock", input: "x", store: true },
       { model: "gpt-mock", input: "x", background: true },
-      { model: "gpt-mock", input: "x", previous_response_id: "resp_x" }
+      { model: "gpt-mock", input: "x", previous_response_id: "resp_x" },
+      { model: "gpt-mock", input: "x", conversation: "conv_x" }
     ]) {
       const response = await SELF.fetch("https://example.com/v1/responses", { method: "POST", headers: auth(gateway), body: JSON.stringify(body) });
       expect(response.status).toBe(400);
       expect((await response.json() as { error: { param?: string } }).error.param).toBeTruthy();
     }
+
+    const before = mockUpstreamStats().generationRequests;
+    const ignored = await SELF.fetch("https://example.com/v1/responses", {
+      method: "POST",
+      headers: auth(gateway),
+      body: JSON.stringify({ model: "gpt-mock", input: "x", service_tier: "priority", future_option: { value: 1 } })
+    });
+    expect(ignored.status).toBe(200);
+    expect(ignored.headers.get("X-OneAPI-Ignored-Parameters")).toBe("service_tier, future_option");
+    await ignored.text();
+    const stats = mockUpstreamStats();
+    expect(stats.generationRequests).toBe(before + 1);
+    expect(stats.lastGenerationBodyKeys).not.toEqual(expect.arrayContaining(["service_tier", "future_option"]));
   });
 
   it("enforces concurrency for the full stream lifetime and releases at terminal completion", async () => {

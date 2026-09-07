@@ -215,7 +215,7 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
         capabilities: { reasoning: { supported_efforts: null, default_effort: null } }
       })
     ]));
-    const keyModels = await (await SELF.fetch(origin + "/v1/models", { headers: auth(key.key) })).json() as any;
+    const keyModels = await (await SELF.fetch(origin + "/v1/models?client_version=0.153.4", { headers: auth(key.key) })).json() as any;
     expect(keyModels.data).toHaveLength(1);
     expect(keyModels.data[0]).toMatchObject({
       id: "gpt-mock",
@@ -224,6 +224,9 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
       owned_by: "openai",
       capabilities: { reasoning: { supported_efforts: ["none", "low", "medium", "high", "max"], default_effort: "low" } }
     });
+    expect(keyModels.data.map((model: { id: string }) => model.id)).toEqual(["gpt-mock"]);
+    expect(keyModels.models.map((model: { slug: string }) => model.slug)).toEqual(["gpt-mock"]);
+    expect(JSON.stringify(keyModels)).not.toContain("gpt-hidden");
 
     configureMockUpstream({ models: "invalid_models" });
     const invalid = await SELF.fetch(origin + "/admin/test/models", { headers: auth(admin) });
@@ -466,6 +469,9 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
       ...responsesBase, stream: false, max_output_tokens: 128, temperature: 0.2, top_p: 0.9
     }, ["max_output_tokens", "temperature", "top_p"])).toContain('"total_tokens":12');
     expect(await invoke("/v1/responses", {
+      ...responsesBase, service_tier: "priority", future_option: true
+    }, ["service_tier", "future_option"])).toContain('"total_tokens":12');
+    expect(await invoke("/v1/responses", {
       ...responsesBase, stream: true, max_output_tokens: 64
     }, ["max_output_tokens"])).toContain("response.completed");
     expect(await invoke("/v1/chat/completions", {
@@ -474,6 +480,9 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
     expect(await invoke("/v1/chat/completions", {
       ...chatBase, stream: true, stream_options: { include_usage: true }, max_completion_tokens: 64
     }, ["max_completion_tokens"])).toContain("[DONE]");
+    expect(await invoke("/v1/chat/completions", {
+      ...chatBase, max_output_tokens: 10
+    }, ["max_output_tokens"])).toContain('"total_tokens":12');
 
     const nullResponse = await SELF.fetch(`${origin}/v1/chat/completions`, {
       method: "POST", headers: auth(key.key),
@@ -505,8 +514,6 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
       ["/v1/responses", { ...responsesBase, top_p: 1.1 }, "top_p"],
       ["/v1/chat/completions", { ...chatBase, max_tokens: "128" }, "max_tokens"],
       ["/v1/chat/completions", { ...chatBase, max_completion_tokens: 0 }, "max_completion_tokens"],
-      ["/v1/responses", { ...responsesBase, service_tier: "priority" }, "service_tier"],
-      ["/v1/chat/completions", { ...chatBase, max_output_tokens: 10 }, "max_output_tokens"]
     ] as const) {
       const response = await SELF.fetch(`${origin}${path}`, { method: "POST", headers: auth(key.key), body: JSON.stringify(body) });
       expect(response.status).toBe(400);

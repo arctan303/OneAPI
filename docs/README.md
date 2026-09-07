@@ -1,6 +1,6 @@
 # OneAPI 使用说明
 
-更新时间：2026-09-07。当前产品主路径是轻量单服务器：Node.js 24.x（至少 24.15）、一个生产 bundle、一个 Node 进程和一个业务 SQLite 文件。生产运行不依赖 Wrangler/Miniflare/workerd 或外部数据库。本机真实账号与两协议验收完成，原账号无需重新授权。当前结果、包大小及本机内存样本见 [SERVER-001](verification/SERVER-001.md)，用户已有远端Node安装；本轮尚未连接验证其升级。本地已运行[v0.2.0-dev.3](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.3)，一次真实Luna调用及Spark目录验证通过，新安装/旧版升级和发布证据见[RELEASE-004](verification/RELEASE-004.md)。
+更新时间：2026-09-08。当前产品主路径是轻量单服务器：Node.js 24.x（至少 24.15）、一个生产 bundle、一个 Node 进程和一个业务 SQLite 文件。dev.4 候选已在本机用真实账号跑通 Codex 0.153.4 模型目录、文本、只读工具续轮与未知字段兼容，并完成桌面/390px 后台验收；fresh R2 审查和 GitHub 发布状态见 [RELEASE-005](verification/RELEASE-005.md)。用户已有远端 Node 安装，本次不会自动升级或部署。
 
 ## 新服务器流程
 
@@ -33,7 +33,7 @@ node --env-file=.dev.vars dist/server/migrate.mjs --legacy-root .wrangler/state/
 
 ## 管理员登录与 API
 
-Cloudflare Access 的两个应用参数是 Team Domain 和 Application AUD。OneAPI 只校验 Access 身份，不创建 Cloudflare 应用或策略。dev.3 根路径跳转到 `/admin/login`，登录后进入 `/admin/`；Access 保护 `/admin/*` 即可让浏览器先完成 CF 登录。Access 应只保护管理路径；`/v1` 必须保持 API 访问，不要让它触发交互式登录跳转。
+Cloudflare Access 的两个应用参数是 Team Domain 和 Application AUD。OneAPI 只校验 Access 身份，不创建 Cloudflare 应用或策略。dev.4 根路径跳转到 `/admin/login`，登录后进入 `/admin/`；Access 保护 `/admin/*` 即可让浏览器先完成 CF 登录。Access 应只保护管理路径；`/v1` 必须保持 API 访问，不要让它触发交互式登录跳转。
 
 管理员 API key 是应用层兜底。若 Access/WAF 在 Cloudflare 边缘卡住，请在 Cloudflare 控制台关闭或收窄门禁，使请求到达应用；仅关闭 OneAPI 内的 Access 配置无法恢复边缘已拦截的请求。管理员会话、API key 和 Codex 账号是不同边界；不要把管理员 key 给第三方客户端。
 

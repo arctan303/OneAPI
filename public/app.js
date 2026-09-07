@@ -586,7 +586,7 @@ function setQuota(card, win) {
     if (meta) meta.textContent = "未获取额度数据";
     if (reset) reset.textContent = "重置时间：未知";
     if (status) { status.textContent = "未知"; status.className = "badge"; }
-    if (bar) { bar.style.width = "0%"; bar.className = "quota-progress-fill bar-good"; }
+    if (bar) { bar.value = 0; bar.className = "quota-progress-fill bar-good"; }
     return;
   }
   const rem = win.remainingPercent;
@@ -614,7 +614,7 @@ function setQuota(card, win) {
   }
   if (status) { status.textContent = statusText; status.className = statusClass; }
   if (bar) {
-    bar.style.width = rem == null ? "0%" : `${Math.max(0, Math.min(100, rem))}%`;
+    bar.value = rem == null ? 0 : Math.max(0, Math.min(100, rem));
     bar.className = barClass;
   }
 }
@@ -632,7 +632,7 @@ function updateAccountDetailCard(account, connected, reauth) {
     if (email) email.textContent = "尚未连接 Codex 账户";
     if (planBadge) { planBadge.textContent = "未授权"; planBadge.className = "plan-tag plan-unknown"; }
     if (idEl) idEl.textContent = "连接后即可加载账户模型并在本网关中正常调用。";
-    if (tokenEl) { tokenEl.textContent = "未连接"; tokenEl.style.color = "var(--muted)"; }
+    if (tokenEl) { tokenEl.textContent = "未连接"; tokenEl.className = "text-muted"; }
     if (refreshedEl) refreshedEl.textContent = "--";
     if (avatar) avatar.textContent = "C";
     return;
@@ -644,7 +644,7 @@ function updateAccountDetailCard(account, connected, reauth) {
   if (tokenEl) {
     const expired = account.tokenExpiresAt != null && account.tokenExpiresAt <= Date.now();
     tokenEl.textContent = reauth ? "需要重新连接" : expired ? "已过期（等待刷新）" : "正常有效";
-    tokenEl.style.color = reauth || expired ? "var(--danger)" : "var(--accent)";
+    tokenEl.className = reauth || expired ? "text-danger" : "text-accent";
   }
   if (refreshedEl) refreshedEl.textContent = fmtTime(account.lastRefreshAt);
   if (avatar) {
@@ -879,10 +879,12 @@ async function loadAccountOverview(force = false, inheritedToken = null) {
           const card = document.createElement("article");
           card.className = "quota-card additional-quota";
           card.innerHTML = `
-            <div class="quota-head"><div class="quota-title-wrap"><strong>${unknown(win.label || win.limitId || "其他窗口")}</strong></div><span class="badge" data-quota-status>未知</span></div>
-            <div class="quota-progress-box"><div class="quota-progress-track"><div class="quota-progress-fill bar-good" data-quota-bar style="width: 0%"></div></div></div>
+            <div class="quota-head"><div class="quota-title-wrap"><strong>其他窗口</strong></div><span class="badge" data-quota-status>未知</span></div>
+            <div class="quota-progress-box"><div class="quota-progress-track"><progress class="quota-progress-fill bar-good" data-quota-bar max="100" value="0"></progress></div></div>
             <div class="quota-stat-row"><div class="quota-numbers"><div class="quota-number" data-quota-remaining>--%</div><span class="stat-caption">剩余额度</span></div><div class="quota-meta-col"><span class="quota-meta-text" data-quota-meta>未获取额度数据</span><span class="quota-reset-text" data-quota-reset>重置时间：未知</span></div></div>
           `;
+          const quotaLabel = card.querySelector(".quota-title-wrap strong");
+          if (quotaLabel) quotaLabel.textContent = unknown(win.label || win.limitId || "其他窗口");
           setQuota(card, win);
           extra.append(card);
         }
@@ -1123,7 +1125,10 @@ async function openLogDetailModal(logId) {
     addBody("请求正文 (Prompt / Input)", detail.requestBody, Boolean(detail.requestTruncated));
     addBody("响应正文 (Response / Output)", detail.responseBody, Boolean(detail.responseTruncated));
   } catch (err) {
-    $("modal-log-bodies").innerHTML = `<p class="message">加载详情失败：${err.message}</p>`;
+    const errorMessage = document.createElement("p");
+    errorMessage.className = "message";
+    errorMessage.textContent = `加载详情失败：${err.message}`;
+    $("modal-log-bodies").replaceChildren(errorMessage);
   }
 }
 
@@ -1154,13 +1159,22 @@ function renderLog(log) {
 
   const titleArea = document.createElement("div");
   titleArea.className = "log-title-area";
-  titleArea.innerHTML = `
-    <span class="status-tag ${outcomeCls}">${log.httpStatus ? log.httpStatus + " · " : ""}${outcomeText}</span>
-    <strong class="model-tag">${model}</strong>
-    <span class="proto-tag">${protocol}</span>
-    <span class="latency-text">${durationText}</span>
-    <span class="muted">${fmtTime(logValue(log, "startedAt", "createdAt"))}</span>
-  `;
+  const statusTag = document.createElement("span");
+  statusTag.className = `status-tag ${outcomeCls}`;
+  statusTag.textContent = `${log.httpStatus ? log.httpStatus + " · " : ""}${outcomeText}`;
+  const modelTag = document.createElement("strong");
+  modelTag.className = "model-tag";
+  modelTag.textContent = model;
+  const protocolTag = document.createElement("span");
+  protocolTag.className = "proto-tag";
+  protocolTag.textContent = protocol;
+  const latencyText = document.createElement("span");
+  latencyText.className = "latency-text";
+  latencyText.textContent = durationText;
+  const startedAt = document.createElement("span");
+  startedAt.className = "muted";
+  startedAt.textContent = fmtTime(logValue(log, "startedAt", "createdAt"));
+  titleArea.append(statusTag, modelTag, protocolTag, latencyText, startedAt);
 
   const actionsArea = document.createElement("div");
   actionsArea.className = "log-actions";
@@ -1201,16 +1215,30 @@ function renderLog(log) {
 
   const chipsArea = document.createElement("div");
   chipsArea.className = "log-info-chips";
-  chipsArea.innerHTML = `
-    <span class="chip">Key: <strong>${unknown(keyName)}</strong></span>
-    <span class="chip">Tokens: <strong>${inTok} / ${outTok} (总计 ${totTok})</strong></span>
-    ${log.bodyCaptured ? '<span class="chip" style="color:var(--accent);">已记录正文</span>' : '<span class="chip muted">无正文</span>'}
-    ${log.requestTruncated || log.responseTruncated ? '<span class="chip" style="color:var(--danger);">有截断</span>' : ''}
-  `;
+  const keyChip = document.createElement("span");
+  keyChip.className = "chip";
+  const keyStrong = document.createElement("strong");
+  keyStrong.textContent = unknown(keyName);
+  keyChip.append("Key: ", keyStrong);
+  const tokenChip = document.createElement("span");
+  tokenChip.className = "chip";
+  const tokenStrong = document.createElement("strong");
+  tokenStrong.textContent = `${inTok} / ${outTok} (总计 ${totTok})`;
+  tokenChip.append("Tokens: ", tokenStrong);
+  chipsArea.append(keyChip, tokenChip);
+  const bodyChip = document.createElement("span");
+  bodyChip.className = log.bodyCaptured ? "chip text-accent" : "chip muted";
+  bodyChip.textContent = log.bodyCaptured ? "已记录正文" : "无正文";
+  chipsArea.append(bodyChip);
+  if (log.requestTruncated || log.responseTruncated) {
+    const truncatedChip = document.createElement("span");
+    truncatedChip.className = "chip text-danger";
+    truncatedChip.textContent = "有截断";
+    chipsArea.append(truncatedChip);
+  }
 
   const reqIdSnippet = document.createElement("span");
-  reqIdSnippet.className = "muted";
-  reqIdSnippet.style.fontFamily = "ui-monospace, monospace";
+  reqIdSnippet.className = "muted mono-txt";
   reqIdSnippet.textContent = requestId.length > 18 ? `ID: …${requestId.slice(-12)}` : `ID: ${requestId}`;
 
   bodyRow.append(chipsArea, reqIdSnippet);
@@ -1368,4 +1396,3 @@ $("modal-log-download-btn")?.addEventListener("click", () => {
     URL.revokeObjectURL(url);
   }
 });
-

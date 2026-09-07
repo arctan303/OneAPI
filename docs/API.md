@@ -1,25 +1,25 @@
 # 本地 API 与管理扩展
 
-本文件描述当前源码接口范围；dev.3 参数扩展实施状态见 [PARAM-COMPAT-001](tasks/PARAM-COMPAT-001.md)，发布状态见 [RELEASE-004](verification/RELEASE-004.md)。Base URL 为 http://127.0.0.1:8787/v1。机器调用使用 Authorization: Bearer 加后台创建的 API key；不需要管理员 Cookie。
+本文件描述当前源码接口范围；dev.4 Codex provider 兼容状态见 [CODEX-PROVIDER-001](tasks/CODEX-PROVIDER-001.md)；dev.3 历史发布见 [RELEASE-004](verification/RELEASE-004.md)。Base URL 为 http://127.0.0.1:8787/v1。机器调用使用 Authorization: Bearer 加后台创建的 API key；不需要管理员 Cookie。
 
 ## 模型与生成
 
 | 方法与路径 | 接受字段与行为 | 边界 |
 | --- | --- | --- |
-| GET /v1/models | object:list、data；账号可用目录与该 key 模型范围交集 | 停用/到期 key 拒绝；允许清单不会自动增加未来模型 |
-| POST /v1/responses | model、input、instructions、stream、tools、tool_choice、parallel_tool_calls、reasoning.effort、store:false、background:false | input 支持文本消息、function_call 和 function_call_output；客户端传完整上下文 |
+| GET /v1/models | 标准 object:list/data；携带 client_version 时同响应附加 Codex 原生 models；两种视图为账号目录与该 key 模型范围的同一交集 | 停用/到期 key 拒绝；未知 query 忽略；非法 client_version 拒绝；允许清单不会自动增加未来模型 |
+| POST /v1/responses | 标准子集，以及当前 Codex 的原生 input、tools/tool_choice、reasoning、include、prompt_cache_key、text、client_metadata | 原生项保真转发；未知顶层字段记录后忽略且不转发；store/background/previous_response_id/conversation 等状态语义未实现时拒绝 |
 | POST /v1/chat/completions | model、messages、stream、tools、tool_choice、parallel_tool_calls、stream_options.include_usage、reasoning_effort | system/developer/user/assistant/tool 与函数工具；普通 JSON 或 SSE |
 
-### dev.3 参数兼容矩阵
+### dev.4 参数与 Codex provider 兼容矩阵
 
-以下是Codex订阅适配范围，不代表Platform API的全部能力。依据[官方Codex请求结构](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/common.rs)核对；具体模型接受能力仍由上游决定。
+以下是 Codex 订阅适配范围，不代表 Platform API 的全部能力。当前验收基线为本机 Codex 0.153.4；具体模型接受能力仍由上游目录决定。
 
 | 参数 | 处理方式 |
 | --- | --- |
 | Chat max_completion_tokens、max_tokens；Responses max_output_tokens | 正整数校验后兼容忽略，输出上限不生效 |
 | 两协议 temperature、top_p | 数值范围校验后兼容忽略，采样设置不生效 |
 
-上述可选标量null按未指定；未知字段、非法类型/范围和不支持的关键语义仍返回带字段名的400。service_tier、prompt_cache_key、verbosity、额外reasoning选项、n及结构化输出等本版不新增映射，客户端应省略使用默认行为。previous_response_id、图片/音频、托管工具、后台任务、Codex私有client_metadata/access_programs等尚未实现，不会通过忽略它们伪装执行。
+上述可选标量 null 按未指定。未知顶层生成字段兼容忽略：只记录字段名，不转发字段值，不因未来客户端新增非关键字段返回 400；已知字段的非法类型/范围仍明确 400。Responses 的 include、prompt_cache_key、text、client_metadata、reasoning 上下文及 Codex 原生结构化 input 按当前客户端有界透传；客户端 Authorization、Cookie、User-Agent、Host 和未知请求头绝不透传。store:true、background:true、previous_response_id、conversation 与托管执行等会改变状态或执行边界的已知语义仍拒绝。
 
 兼容忽略参数进入基础日志的ignoredParameters字段（只有字段名，不含参数值），无需开启完整正文记录；详情显示“未生效参数”。JSON/SSE成功响应以X-OneAPI-Ignored-Parameters头返回被忽略的字段名，无忽略时不加该头，不修改标准响应结构。上限被忽略可能产生比客户端设置更多的token；usage仍来自真实上游，不伪造截断。
 
@@ -70,7 +70,7 @@ for await (const chunk of stream) {
 }
 ```
 
-示例会实际调用两次。dev.3对上述明确的采样/token上限参数兼容忽略，并以响应头和基础日志告知未生效字段；其他字段按兼容矩阵处理。
+示例会实际调用两次。dev.4 对上述明确的采样/token 上限参数兼容忽略，并以响应头和基础日志告知未生效字段；其他字段按兼容矩阵处理。
 
 ## 管理接口
 

@@ -28,7 +28,10 @@ const stats = {
   lastVersion: "",
   lastClientVersion: "",
   lastAuthorizationIsBearer: false,
-  lastAccountHeaderPresent: false
+  lastAccountHeaderPresent: false,
+  lastCodexWindowId: "",
+  lastCodexBetaFeatures: "",
+  lastCookiePresent: false
 };
 
 export function configureMockAccessJwks(value: Record<string, unknown> | null): void {
@@ -66,6 +69,9 @@ export function resetMockUpstream(): void {
   stats.lastClientVersion = "";
   stats.lastAuthorizationIsBearer = false;
   stats.lastAccountHeaderPresent = false;
+  stats.lastCodexWindowId = "";
+  stats.lastCodexBetaFeatures = "";
+  stats.lastCookiePresent = false;
   accessJwks = null;
   accessJwksDelayMs = 0;
 }
@@ -90,6 +96,9 @@ function recordCodexRequest(request: Request, url: URL): void {
   stats.lastClientVersion = url.searchParams.get("client_version") ?? "";
   stats.lastAuthorizationIsBearer = request.headers.get("authorization")?.startsWith("Bearer ") === true;
   stats.lastAccountHeaderPresent = Boolean(request.headers.get("chatgpt-account-id"));
+  stats.lastCodexWindowId = request.headers.get("x-codex-window-id") ?? "";
+  stats.lastCodexBetaFeatures = request.headers.get("x-codex-beta-features") ?? "";
+  stats.lastCookiePresent = request.headers.has("cookie");
 }
 
 function trackedBody(chunks: Uint8Array[], status: number, headers: Record<string, string>): Response {
@@ -191,10 +200,10 @@ function sseResponse(body: Record<string, unknown>, signal: AbortSignal): Respon
   }
   parts.push(event("response.completed", { response: completed }));
   const bytes = new TextEncoder().encode(parts.join(""));
-  const chunks: Uint8Array[] = [];
-  const step = 17;
-  for (let index = 0; index < bytes.length; index += step) chunks.push(bytes.slice(index, Math.min(bytes.length, index + step)));
   const slow = /slow/.test(collectText(body.input));
+  const chunks: Uint8Array[] = [];
+  const step = slow ? 256 : 17;
+  for (let index = 0; index < bytes.length; index += step) chunks.push(bytes.slice(index, Math.min(bytes.length, index + step)));
   return new Response(new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (signal.aborted) {
@@ -294,8 +303,11 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
           slug: "gpt-mock",
           display_name: "Mock model",
           supported_in_api: true,
-          supported_reasoning_levels: [{ effort: "none" }, { effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "max" }],
-          default_reasoning_level: "low"
+          supported_reasoning_levels: ["none", "low", "medium", "high", "max"].map((effort) => ({ effort, description: effort })),
+          default_reasoning_level: "low",
+          shell_type: "shell_command",
+          base_instructions: "You are a test coding agent.",
+          future_catalog_field: { preserved: true }
         },
         { slug: "gpt-empty", display_name: "No reasoning", supported_in_api: true, supported_reasoning_levels: [], default_reasoning_level: "high" },
         { slug: "gpt-unknown", display_name: "Unknown reasoning", supported_in_api: true, default_reasoning_level: "high" }

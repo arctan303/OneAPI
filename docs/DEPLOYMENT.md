@@ -1,6 +1,6 @@
 # OneAPI 部署说明
 
-> v0.2.0-dev.3 修复 Access 登录返回、Spark 目录与常见客户端参数兼容；保留启动参数、配置向导与分区后台。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](NETWORK.md)。
+> v0.2.0-dev.4 完整接通 Codex 0.153.4 自定义 Responses provider，并合入分区后台、额度卡片、模型/key/日志交互优化。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](NETWORK.md)。
 
 ## 当前主路径：轻量单服务器
 
@@ -51,7 +51,7 @@ node --env-file=.dev.vars dist/server/migrate.mjs --legacy-root .wrangler/state/
 
 ## Access、管理员与 API 边界
 
-后台的 Cloudflare Access 配置只有 Team Domain 和 Application AUD 两个参数。它们用于验证 Access 身份，不创建 Cloudflare 应用或策略。dev.3 根路径整页跳转 `/admin/login`，认证后进入 `/admin/`；Access 保护 `/admin/*`，让浏览器在加载页面前完成 CF 登录。普通口令表单不再有额外 CF 按钮；`/v1` 必须保持 API 访问，不得触发交互式浏览器登录跳转。
+后台的 Cloudflare Access 配置只有 Team Domain 和 Application AUD 两个参数。它们用于验证 Access 身份，不创建 Cloudflare 应用或策略。dev.4 根路径整页跳转 `/admin/login`，认证后进入 `/admin/`；Access 保护 `/admin/*`，让浏览器在加载页面前完成 CF 登录。普通口令表单不再有额外 CF 按钮；`/v1` 必须保持 API 访问，不得触发交互式浏览器登录跳转。
 
 管理员 `ADMIN_API_KEY` 始终保留作为应用层兜底。若 Cloudflare Access/WAF 在边缘拦截，请在 Cloudflare 控制台关闭或收窄门禁，使请求到达应用；仅关闭 OneAPI 内开关不能恢复已经被边缘阻断的请求。API key、管理员会话和 Codex OAuth 账号属于不同边界，不要混用或交给第三方。
 
@@ -99,7 +99,7 @@ npx wrangler secret delete ACCOUNT_IMPORT_SECRET --config wrangler.worker.jsonc
 
 后台“Cloudflare Access”配置 Team Domain（如 `team.cloudflareaccess.com`）、Application AUD 和启用开关。程序仅验证登录，不通过这两个参数创建 Cloudflare 应用或身份策略。
 
-在 Cloudflare Zero Trust → Access → Applications 创建专用 Self-hosted 应用，保护 `api.arcinks.com/admin/*`，只允许自己的身份（例如自己的邮箱）。如果需要通过 workers.dev 登录，也须在同一 Access 应用覆盖对应 Worker 的 `/admin/*`；或者不对外使用该测试域名。历史Worker版本的根页面只有静态登录框；dev.3改为根跳转/admin/login。账号、key、日志和设置数据均走受保护管理接口，页面外壳本身不包含数据。
+在 Cloudflare Zero Trust → Access → Applications 创建专用 Self-hosted 应用，保护 `api.arcinks.com/admin/*`，只允许自己的身份（例如自己的邮箱）。如果需要通过 workers.dev 登录，也须在同一 Access 应用覆盖对应 Worker 的 `/admin/*`；或者不对外使用该测试域名。历史Worker版本的根页面只有静态登录框；dev.4改为根跳转/admin/login。账号、key、日志和设置数据均走受保护管理接口，页面外壳本身不包含数据。
 
 **不要给整个域名或 `/v1/*` 套交互式 Access 门禁**，否则普通 OpenAI SDK 的 Bearer API key 会收到 HTML 登录跳转。若已经设置全域门禁，收窄应用范围；不是在 OneAPI 内忽略身份校验。
 

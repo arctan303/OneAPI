@@ -58,6 +58,7 @@ export interface LoginPrivateState {
 
 export interface ModelCapability {
   id: string;
+  codex: Record<string, unknown>;
   reasoning: {
     supportedEfforts: string[] | null;
     defaultEffort: string | null;

@@ -7,6 +7,7 @@ export interface NormalizedRequest {
   stream: boolean;
   ignoredParameters: string[];
   upstream: Record<string, unknown>;
+  codexNative?: boolean;
   chat?: { includeUsage: boolean };
 }
 
@@ -28,6 +29,21 @@ function onlyKeys(value: JsonObject, allowed: readonly string[], param = "body")
   }
 }
 
+const MAX_IGNORED_PARAMETERS = 32;
+const MAX_IGNORED_PARAMETER_LENGTH = 128;
+
+function addIgnoredParameter(ignored: string[], name: string): void {
+  if (ignored.length >= MAX_IGNORED_PARAMETERS) return;
+  const safe = name.replace(/[^A-Za-z0-9_.:-]/g, "?").slice(0, MAX_IGNORED_PARAMETER_LENGTH) || "?";
+  if (!ignored.includes(safe)) ignored.push(safe);
+}
+
+function unknownKeys(value: JsonObject, allowed: readonly string[]): string[] {
+  const ignored: string[] = [];
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) addIgnoredParameter(ignored, key);
+  return ignored;
+}
+
 function requiredString(value: unknown, param: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new GatewayError(400, "invalid_type", `${param} 必须是非空字符串。`, param);
@@ -46,7 +62,7 @@ function ignoredPositiveInteger(body: JsonObject, name: string, ignored: string[
   if (value === undefined || value === null) return;
   if (typeof value !== "number") throw new GatewayError(400, "invalid_type", `${name} 必须是正整数。`, name);
   if (!Number.isSafeInteger(value) || value <= 0) throw new GatewayError(400, "invalid_value", `${name} 必须是正整数。`, name);
-  ignored.push(name);
+  addIgnoredParameter(ignored, name);
 }
 
 function ignoredNumberInRange(body: JsonObject, name: string, minimum: number, maximum: number, ignored: string[]): void {
@@ -56,7 +72,7 @@ function ignoredNumberInRange(body: JsonObject, name: string, minimum: number, m
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
     throw new GatewayError(400, "invalid_value", `${name} 必须在 ${minimum} 到 ${maximum} 之间。`, name);
   }
-  ignored.push(name);
+  addIgnoredParameter(ignored, name);
 }
 export async function readJsonBody(request: Request): Promise<JsonObject> {
   const declared = request.headers.get("content-length");
@@ -115,9 +131,13 @@ function normalizeToolChoice(value: unknown, chat: boolean): string {
 
 const reasoningEffortIdentifier = /^[a-z][a-z0-9_-]{0,31}$/;
 
-function normalizeReasoning(value: unknown, effortParam = "reasoning.effort"): JsonObject | undefined {
+function normalizeReasoning(value: unknown, effortParam = "reasoning.effort", codexNative = false): JsonObject | undefined {
   if (value === undefined) return undefined;
   const reasoning = object(value, "reasoning");
+  if (codexNative) {
+    if (reasoning.effort !== undefined) requiredString(reasoning.effort, effortParam);
+    return reasoning;
+  }
   onlyKeys(reasoning, ["effort"], "reasoning");
   const effort = requiredString(reasoning.effort, effortParam);
   if (!reasoningEffortIdentifier.test(effort)) {
@@ -152,12 +172,27 @@ function responseMessage(role: string, content: string): JsonObject {
   return { type: "message", role, content: [{ type: contentType, text: content }] };
 }
 
-function normalizeResponseInput(value: unknown): JsonObject[] {
+function codexNativeInput(value: unknown): boolean {
+  return Array.isArray(value) && value.some((entry) =>
+    Boolean(entry && typeof entry === "object" && !Array.isArray(entry) && (entry as JsonObject).type === "additional_tools")
+  );
+}
+
+function normalizeResponseInput(value: unknown, codexNative = false): JsonObject[] {
   if (typeof value === "string") return [responseMessage("user", value)];
   if (!Array.isArray(value)) throw new GatewayError(400, "invalid_type", "input 必须是文本或输入项数组。", "input");
   return value.map((entry, index) => {
     const item = object(entry, `input[${index}]`);
     const type = item.type ?? "message";
+    if (codexNative) {
+      const nativeType = requiredString(type, `input[${index}].type`);
+      if (nativeType === "additional_tools") {
+        const tools = normalizeNativeTools(item.tools, `input[${index}].tools`, true);
+        if (!tools) throw new GatewayError(400, "invalid_type", `input[${index}].tools 必须是数组。`, `input[${index}].tools`);
+        return { ...item, tools };
+      }
+      return item;
+    }
     if (type === "message") {
       onlyKeys(item, ["type", "role", "content"], `input[${index}]`);
       const role = requiredString(item.role, `input[${index}].role`);
@@ -190,32 +225,126 @@ function normalizeResponseInput(value: unknown): JsonObject[] {
   });
 }
 
+function normalizeNativeTools(value: unknown, param = "tools", allowNamespace = false): JsonObject[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new GatewayError(400, "invalid_type", `${param} 必须是数组。`, param);
+  return value.map((entry, index) => {
+    const tool = object(entry, `${param}[${index}]`);
+    const type = requiredString(tool.type, `${param}[${index}].type`);
+    if (type !== "function" && type !== "custom" && !(allowNamespace && type === "namespace")) {
+      const allowed = allowNamespace ? "function、custom 或 namespace" : "function 或 custom";
+      throw new GatewayError(400, "unsupported_tool", `${param}[${index}].type 仅支持由客户端执行的 ${allowed} 工具声明。`, `${param}[${index}].type`);
+    }
+    return tool;
+  });
+}
+
+function normalizeStringArray(value: unknown, param: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 32) throw new GatewayError(400, "invalid_type", `${param} 必须是最多 32 项的字符串数组。`, param);
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > 128) {
+      throw new GatewayError(400, "invalid_type", `${param}[${index}] 必须是 1 到 128 字符的字符串。`, `${param}[${index}]`);
+    }
+    return entry;
+  });
+}
+
+function normalizeOptionalString(value: unknown, param: string, maxLength = 256): string | undefined {
+  if (value === undefined) return undefined;
+  const result = requiredString(value, param);
+  if (result.length > maxLength) throw new GatewayError(400, "invalid_value", `${param} 最长为 ${maxLength} 个字符。`, param);
+  return result;
+}
+
+const CODEX_CLIENT_METADATA_KEYS = new Set([
+  "x-codex-installation-id",
+  "session_id",
+  "thread_id",
+  "turn_id",
+  "root_turn_id",
+  "x-codex-window-id",
+  "x-codex-turn-metadata"
+]);
+
+function normalizeClientMetadata(value: unknown, ignored: string[]): JsonObject | undefined {
+  if (value === undefined) return undefined;
+  const metadata = object(value, "client_metadata");
+  const normalized: JsonObject = {};
+  for (const [key, entry] of Object.entries(metadata)) {
+    if (!CODEX_CLIENT_METADATA_KEYS.has(key)) {
+      addIgnoredParameter(ignored, `client_metadata.${key}`);
+      continue;
+    }
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(key)) {
+      throw new GatewayError(400, "invalid_value", "client_metadata 包含无效字段名。", `client_metadata.${key}`);
+    }
+    if (typeof entry !== "string" || new TextEncoder().encode(entry).byteLength > 16 * 1024) {
+      throw new GatewayError(400, "invalid_type", `client_metadata.${key} 必须是不超过 16 KiB 的字符串。`, `client_metadata.${key}`);
+    }
+    normalized[key] = entry;
+  }
+  return normalized;
+}
+
+function normalizeOptionalObject(value: unknown, param: string): JsonObject | undefined {
+  return value === undefined ? undefined : object(value, param);
+}
+
+function normalizeNativeToolChoice(value: unknown): unknown {
+  if (value === undefined) return "auto";
+  if (typeof value === "string") {
+    const choice = requiredString(value, "tool_choice");
+    if (!["auto", "none", "required"].includes(choice)) {
+      throw new GatewayError(400, "unsupported_tool", "tool_choice 仅支持 auto、none、required。", "tool_choice");
+    }
+    return choice;
+  }
+  const choice = object(value, "tool_choice");
+  const type = requiredString(choice.type, "tool_choice.type");
+  if (type !== "function" && type !== "custom") {
+    throw new GatewayError(400, "unsupported_tool", "tool_choice.type 仅支持由客户端执行的 function 或 custom 工具。", "tool_choice.type");
+  }
+  return choice;
+}
+
 export function normalizeResponses(body: JsonObject): NormalizedRequest {
-  onlyKeys(body, ["model", "input", "instructions", "stream", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "store", "background", "max_output_tokens", "temperature", "top_p"]);
+  const allowed = ["model", "input", "instructions", "stream", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "store", "background", "previous_response_id", "conversation", "max_output_tokens", "temperature", "top_p", "include", "prompt_cache_key", "text", "client_metadata"] as const;
+  const ignoredParameters = unknownKeys(body, allowed);
   const model = requiredString(body.model, "model");
   if (body.store !== undefined && body.store !== false) throw new GatewayError(400, "unsupported_parameter", "store 只允许 false；Demo 不提供服务端会话存储。", "store");
   if (body.background !== undefined && body.background !== false) throw new GatewayError(400, "unsupported_parameter", "background 只允许 false。", "background");
+  if (body.previous_response_id !== undefined) throw new GatewayError(400, "unsupported_parameter", "previous_response_id 需要服务端会话语义，当前不支持。", "previous_response_id");
+  if (body.conversation !== undefined) throw new GatewayError(400, "unsupported_parameter", "conversation 需要服务端会话语义，当前不支持。", "conversation");
   if (body.instructions !== undefined && typeof body.instructions !== "string") throw new GatewayError(400, "invalid_type", "instructions 必须是字符串。", "instructions");
-  const tools = normalizeTools(body.tools, false);
-  const ignoredParameters: string[] = [];
+  const codexNative = codexNativeInput(body.input) || body.client_metadata !== undefined;
+  const tools = codexNative ? normalizeNativeTools(body.tools) : normalizeTools(body.tools, false);
   ignoredPositiveInteger(body, "max_output_tokens", ignoredParameters);
   ignoredNumberInRange(body, "temperature", 0, 2, ignoredParameters);
   ignoredNumberInRange(body, "top_p", 0, 1, ignoredParameters);
+  const include = normalizeStringArray(body.include, "include");
+  const promptCacheKey = normalizeOptionalString(body.prompt_cache_key, "prompt_cache_key");
+  const text = normalizeOptionalObject(body.text, "text");
+  const clientMetadata = normalizeClientMetadata(body.client_metadata, ignoredParameters);
   return {
     model,
     stream: optionalBoolean(body.stream, "stream", false),
     ignoredParameters,
+    ...(codexNative ? { codexNative: true } : {}),
     upstream: {
       model,
-      instructions: body.instructions ?? "",
-      input: normalizeResponseInput(body.input),
+      ...(body.instructions !== undefined ? { instructions: body.instructions } : codexNative ? {} : { instructions: "" }),
+      input: normalizeResponseInput(body.input, codexNative),
       ...(tools ? { tools } : {}),
-      tool_choice: normalizeToolChoice(body.tool_choice, false),
+      tool_choice: codexNative ? normalizeNativeToolChoice(body.tool_choice) : normalizeToolChoice(body.tool_choice, false),
       parallel_tool_calls: optionalBoolean(body.parallel_tool_calls, "parallel_tool_calls", true),
-      ...(body.reasoning !== undefined ? { reasoning: normalizeReasoning(body.reasoning) } : {}),
+      ...(body.reasoning !== undefined ? { reasoning: normalizeReasoning(body.reasoning, "reasoning.effort", codexNative) } : {}),
       store: false,
       stream: true,
-      include: ["reasoning.encrypted_content"]
+      include: include ?? ["reasoning.encrypted_content"],
+      ...(promptCacheKey !== undefined ? { prompt_cache_key: promptCacheKey } : {}),
+      ...(text !== undefined ? { text } : {}),
+      ...(clientMetadata !== undefined ? { client_metadata: clientMetadata } : {})
     }
   };
 }
@@ -268,7 +397,8 @@ function normalizeChatMessages(value: unknown): { instructions: string; input: J
 }
 
 export function normalizeChat(body: JsonObject): NormalizedRequest {
-  onlyKeys(body, ["model", "messages", "stream", "tools", "tool_choice", "parallel_tool_calls", "stream_options", "reasoning_effort", "max_completion_tokens", "max_tokens", "temperature", "top_p"]);
+  const allowed = ["model", "messages", "stream", "tools", "tool_choice", "parallel_tool_calls", "stream_options", "reasoning_effort", "max_completion_tokens", "max_tokens", "temperature", "top_p"] as const;
+  const unknown = unknownKeys(body, allowed);
   const model = requiredString(body.model, "model");
   const messages = normalizeChatMessages(body.messages);
   const tools = normalizeTools(body.tools, true);
@@ -280,7 +410,7 @@ export function normalizeChat(body: JsonObject): NormalizedRequest {
   }
   let reasoning: JsonObject | undefined;
   if (body.reasoning_effort !== undefined) reasoning = normalizeReasoning({ effort: body.reasoning_effort }, "reasoning_effort");
-  const ignoredParameters: string[] = [];
+  const ignoredParameters: string[] = [...unknown];
   ignoredPositiveInteger(body, "max_completion_tokens", ignoredParameters);
   ignoredPositiveInteger(body, "max_tokens", ignoredParameters);
   ignoredNumberInRange(body, "temperature", 0, 2, ignoredParameters);

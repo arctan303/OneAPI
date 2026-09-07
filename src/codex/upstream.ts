@@ -269,11 +269,32 @@ export function createModelsRequest(credentials: StoredCredentials): Request {
 export function createResponseRequest(
   credentials: StoredCredentials,
   body: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  clientHeaders?: Headers
 ): Request {
+  const headers = codexHeaders(credentials, "text/event-stream");
+  if (clientHeaders) {
+    for (const name of [
+      "x-codex-beta-features",
+      "x-codex-window-id",
+      "x-codex-turn-metadata",
+      "x-openai-internal-codex-responses-lite",
+      "x-client-request-id",
+      "session-id",
+      "thread-id",
+      "x-codex-parent-thread-id",
+      "x-openai-subagent"
+    ]) {
+      const value = clientHeaders.get(name);
+      if (value !== null) {
+        if (new TextEncoder().encode(value).byteLength > 16 * 1024) throw new GatewayError(400, "invalid_header", `${name} 请求头超过 16 KiB。`, name);
+        headers.set(name, value);
+      }
+    }
+  }
   return new Request(`${CODEX_BASE_URL}/responses`, {
     method: "POST",
-    headers: codexHeaders(credentials, "text/event-stream"),
+    headers,
     body: JSON.stringify(body),
     ...(signal ? { signal } : {}),
     redirect: "manual"
@@ -300,12 +321,13 @@ export async function fetchResponseStream(
   fetcher: OutboundFetch,
   credentials: StoredCredentials,
   body: Record<string, unknown>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  clientHeaders?: Headers
 ): Promise<Response> {
   const targetUrl = `${CODEX_BASE_URL}/responses`;
   let response: Response;
   try {
-    response = await fetcher(createResponseRequest(credentials, body, signal));
+    response = await fetcher(createResponseRequest(credentials, body, signal, clientHeaders));
   } catch {
     if (signal.aborted) throw generationAbortError(signal);
     throw new GatewayError(502, "upstream_network_error", "无法连接 Codex 生成服务。", undefined, "server_error");

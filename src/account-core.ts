@@ -118,7 +118,7 @@ const ADMIN_LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const API_KEY_LIMIT = 32;
 const USAGE_CACHE_MS = 30_000;
 const MODEL_CATALOG_CACHE_MS = 5 * 60 * 1000;
-const MODEL_CATALOG_CACHE_VERSION = 2;
+const MODEL_CATALOG_CACHE_VERSION = 3;
 const REASONING_EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 const MAX_LOG_ROWS = 5_000;
 const REQUEST_GROUP_LIMIT = 256;
@@ -166,7 +166,7 @@ interface UsageCacheRecord {
 }
 
 interface ModelCatalogCacheRecord {
-  version: 2;
+  version: 3;
   accountId: string;
   generation: number;
   fetchedAt: number;
@@ -1717,7 +1717,7 @@ export class AccountService {
         && supportedEfforts.includes(rawDefault)
         ? rawDefault
         : null;
-      capabilities.push({ id: model.slug, reasoning: { supportedEfforts, defaultEffort } });
+      capabilities.push({ id: model.slug, codex: model, reasoning: { supportedEfforts, defaultEffort } });
     }
     return capabilities;
   }
@@ -1788,6 +1788,8 @@ export class AccountService {
       && Array.isArray(cache.models)
       && cache.models.every((model) => {
         if (!model || typeof model.id !== "string" || !model.reasoning) return false;
+        if (!model.codex || typeof model.codex !== "object" || Array.isArray(model.codex)) return false;
+        if (model.codex.slug !== model.id || model.codex.visibility === "hide") return false;
         const supported = model.reasoning.supportedEfforts;
         if (supported !== null && (!Array.isArray(supported) || !supported.every((effort) => typeof effort === "string" && REASONING_EFFORT_PATTERN.test(effort)))) return false;
         return model.reasoning.defaultEffort === null
@@ -1819,27 +1821,29 @@ export class AccountService {
     }
   }
 
-  private modelListResponse(capabilities: ModelCapability[], identity?: GatewayIdentity): Response {
+  private modelListResponse(capabilities: ModelCapability[], identity?: GatewayIdentity, codexNative = false): Response {
     const visible = identity ? capabilities.filter((model) => modelAllowed(identity, model.id)) : capabilities;
+    const data = visible.map((model) => ({
+      id: model.id,
+      object: "model",
+      created: 0,
+      owned_by: "openai",
+      capabilities: {
+        reasoning: {
+          supported_efforts: model.reasoning.supportedEfforts,
+          default_effort: model.reasoning.defaultEffort
+        }
+      }
+    }));
     return Response.json({
       object: "list",
-      data: visible.map((model) => ({
-        id: model.id,
-        object: "model",
-        created: 0,
-        owned_by: "openai",
-        capabilities: {
-          reasoning: {
-            supported_efforts: model.reasoning.supportedEfforts,
-            default_effort: model.reasoning.defaultEffort
-          }
-        }
-      }))
+      data,
+      ...(codexNative ? { models: visible.map((model) => model.codex) } : {})
     }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  private async listModels(identity?: GatewayIdentity): Promise<Response> {
-    return this.modelListResponse(await this.fetchModelCatalog(), identity);
+  private async listModels(identity?: GatewayIdentity, codexNative = false): Promise<Response> {
+    return this.modelListResponse(await this.fetchModelCatalog(), identity, codexNative);
   }
 
   private async validateReasoning(request: NormalizedRequest, chat: boolean): Promise<void> {
@@ -1995,13 +1999,13 @@ export class AccountService {
       let credentials = await this.refreshCredentials();
       let upstream: Response;
       try {
-        upstream = await fetchResponseStream(generationFetch, credentials, normalized.upstream, controller.signal);
+        upstream = await fetchResponseStream(generationFetch, credentials, normalized.upstream, controller.signal, normalized.codexNative ? request.headers : undefined);
       } catch (error) {
         if (!(error instanceof GatewayError) || error.code !== "account_reauthentication_required") throw error;
         credentials = await this.refreshCredentials(true);
         const retryGeneration = await this.currentGeneration();
         try {
-          upstream = await fetchResponseStream(generationFetch, credentials, normalized.upstream, controller.signal);
+          upstream = await fetchResponseStream(generationFetch, credentials, normalized.upstream, controller.signal, normalized.codexNative ? request.headers : undefined);
         } catch (retryError) {
           if (retryError instanceof GatewayError && retryError.code === "account_reauthentication_required") {
             await this.disableRejectedCredentials(retryGeneration, credentials.version);
@@ -2193,7 +2197,13 @@ export class AccountService {
       if (request.method === "GET" && url.pathname === "/admin/test/models") return await this.listModels();
       if (request.method === "POST" && url.pathname === "/admin/test/responses") return await this.handleGeneration(request, false, undefined, requestId);
       if (request.method === "POST" && url.pathname === "/admin/test/chat/completions") return await this.handleGeneration(request, true, undefined, requestId);
-      if (request.method === "GET" && url.pathname === "/v1/models") return await this.listModels(gatewayIdentity!);
+      if (request.method === "GET" && url.pathname === "/v1/models") {
+        const clientVersion = url.searchParams.get("client_version");
+        if (clientVersion !== null && !/^[A-Za-z0-9._-]{1,64}$/.test(clientVersion)) {
+          throw new GatewayError(400, "invalid_request", "client_version 格式无效。", "client_version");
+        }
+        return await this.listModels(gatewayIdentity!, clientVersion !== null);
+      }
       if (request.method === "POST" && url.pathname === "/v1/responses") return await this.handleGeneration(request, false, gatewayIdentity!, requestId);
       if (request.method === "POST" && url.pathname === "/v1/chat/completions") return await this.handleGeneration(request, true, gatewayIdentity!, requestId);
       throw new GatewayError(405, "method_not_allowed", "请求方法或接口不受支持。", undefined, "invalid_request_error");
