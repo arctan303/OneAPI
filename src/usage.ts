@@ -15,7 +15,7 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function parseWindow(value: unknown, metadata: JsonObject, fallbackLabel: string | null): UsageWindow | null {
+function parseWindow(value: unknown, metadata: JsonObject, fallbackLabel: string | null, fetchedAt = Date.now()): UsageWindow | null {
   const source = object(value);
   if (!source) return null;
   const seconds = finite(source.limit_window_seconds ?? source.window_seconds);
@@ -25,22 +25,25 @@ function parseWindow(value: unknown, metadata: JsonObject, fallbackLabel: string
   const reset = finite(source.reset_at ?? source.resets_at ?? source.resetsAt);
   if (duration === null && used === null && reset === null) return null;
   const usedPercent = used === null ? null : Math.max(0, Math.min(100, used));
+  const resetsAt = reset === null ? null : reset < 1_000_000_000_000 ? reset * 1000 : reset;
+  const resetsInSeconds = resetsAt === null ? null : Math.max(0, Math.round((resetsAt - fetchedAt) / 1000));
   return {
     limitId: text(metadata.metered_feature ?? metadata.limit_id ?? metadata.limitId ?? metadata.id),
     label: text(metadata.limit_name ?? metadata.label ?? metadata.name ?? fallbackLabel),
     usedPercent,
     remainingPercent: usedPercent === null ? null : Math.max(0, 100 - usedPercent),
-    resetsAt: reset === null ? null : reset < 1_000_000_000_000 ? reset * 1000 : reset,
+    resetsAt,
+    resetsInSeconds,
     windowDurationMins: duration
   };
 }
 
-function windowsFromContainer(value: unknown, metadata: JsonObject, fallbackLabel: string | null): UsageWindow[] {
+function windowsFromContainer(value: unknown, metadata: JsonObject, fallbackLabel: string | null, fetchedAt = Date.now()): UsageWindow[] {
   const container = object(value);
   if (!container) return [];
   const windows: UsageWindow[] = [];
-  const primary = parseWindow(container.primary_window, metadata, fallbackLabel ?? "Primary");
-  const secondary = parseWindow(container.secondary_window, metadata, fallbackLabel ?? "Secondary");
+  const primary = parseWindow(container.primary_window, metadata, fallbackLabel ?? "Primary", fetchedAt);
+  const secondary = parseWindow(container.secondary_window, metadata, fallbackLabel ?? "Secondary", fetchedAt);
   if (primary) windows.push(primary);
   if (secondary) windows.push(secondary);
   return windows;
@@ -52,7 +55,7 @@ export function normalizeUsagePayload(value: unknown, fetchedAt = Date.now()): U
 
   const nested = object(payload.rate_limits);
   const mainContainer = object(payload.rate_limit) ?? object(nested?.rate_limit);
-  const main = windowsFromContainer(mainContainer, mainContainer ?? {}, "Codex");
+  const main = windowsFromContainer(mainContainer, mainContainer ?? {}, "Codex", fetchedAt);
   let fiveHour: UsageWindow | null = null;
   let sevenDay: UsageWindow | null = null;
   const unknownMain: UsageWindow[] = [];
@@ -69,13 +72,14 @@ export function normalizeUsagePayload(value: unknown, fetchedAt = Date.now()): U
       const item = object(raw);
       if (!item) continue;
       const rateLimit = object(item.rate_limit) ?? item;
-      additional.push(...windowsFromContainer(rateLimit, item, text(item.normal_model_slug)));
+      additional.push(...windowsFromContainer(rateLimit, item, text(item.normal_model_slug), fetchedAt));
     }
   }
 
   if (main.length === 0 && additional.length === 0) {
     throw new GatewayError(502, "usage_windows_missing", "官方额度响应未包含可识别的窗口。", undefined, "server_error");
   }
+
   return {
     available: true,
     fetchedAt,

@@ -63,7 +63,16 @@ function setStreamRouteStatus(running) {
 }
 window.addEventListener("hashchange", () => renderRoute());
 
-function setMessage(id, text) { $(id).textContent = text; }
+function setMessage(id, text, type = "") {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text;
+  if (type === "error") {
+    el.classList.add("error");
+  } else {
+    el.classList.remove("error");
+  }
+}
 function setBadge(id, text) { $(id).textContent = text; }
 function value(id) { return $(id).value.trim(); }
 function safeLogoutPath(url) { return typeof url === "string" && url.startsWith("/") && !url.startsWith("//") ? url : null; }
@@ -139,9 +148,9 @@ function showLogin(message = "", navigate = true) {
   clearAccountOverview();
   clearModels();
   $("logs-list").replaceChildren();
-  $("log-detail-meta").replaceChildren();
-  $("log-detail-bodies").replaceChildren();
-  $("log-detail").classList.add("hidden");
+  if ($("modal-log-meta")) $("modal-log-meta").replaceChildren();
+  if ($("modal-log-bodies")) $("modal-log-bodies").replaceChildren();
+  if ($("log-detail-dialog")?.open) $("log-detail-dialog").close();
   ["logs-key-id", "logs-model", "logs-status", "logs-from", "logs-to"].forEach((id) => { $(id).value = ""; });
   $("logs-key-label").textContent = "全部 key";
   logKeyId = null;
@@ -272,6 +281,8 @@ async function pollLogin() {
       $("verification-link").removeAttribute("href");
       $("verification-link").textContent = "";
       $("user-code").textContent = "";
+      setMessage("account-message", "🎉 Codex 授权连接成功！已同步最新账户状态。");
+      void checkStatus();
       return;
     }
     if (loginState.status !== "pending") {
@@ -330,6 +341,15 @@ async function disconnectCodex() {
   }
 }
 
+function handleModelSelectionChange() {
+  const isCustom = $("model").value === "__custom__";
+  $("custom-model-wrap")?.classList.toggle("hidden", !isCustom);
+  if (isCustom) {
+    $("custom-model-input")?.focus();
+  }
+  updateReasoningOptions();
+}
+
 async function loadModels() {
   const epoch = uiEpoch;
   const requestToken = ++modelRequestToken;
@@ -338,29 +358,52 @@ async function loadModels() {
     const body = await (await adminCall("/admin/test/models")).json();
     if (epoch !== uiEpoch || requestToken !== modelRequestToken) return;
     modelCapabilities = new Map(body.data.map((model) => [model.id, model.capabilities?.reasoning ?? null]));
-    $("models").replaceChildren(...body.data.map((model) => {
+    const select = $("model");
+    const currentVal = select.value;
+    select.replaceChildren();
+
+    if (!body.data?.length) {
       const option = document.createElement("option");
-      option.value = model.id;
-      return option;
-    }));
-    if (!value("model") && body.data[0]) $("model").value = body.data[0].id;
-    updateReasoningOptions();
-    setMessage("models-message", body.data.length ? `账户目录返回 ${body.data.length} 个模型：${body.data.map((model) => model.id).join("、")}` : "账户目录暂未返回可选模型。");
+      option.value = "";
+      option.textContent = "账户目录暂未返回可选模型";
+      select.append(option);
+    } else {
+      body.data.forEach((model) => {
+        const option = document.createElement("option");
+        option.value = model.id;
+        option.textContent = model.id;
+        select.append(option);
+      });
+    }
+
+    const customOpt = document.createElement("option");
+    customOpt.value = "__custom__";
+    customOpt.textContent = "✍ 手动输入其他模型…";
+    select.append(customOpt);
+
+    if (currentVal && Array.from(select.options).some((o) => o.value === currentVal)) {
+      select.value = currentVal;
+    } else if (body.data?.[0]) {
+      select.value = body.data[0].id;
+    }
+    handleModelSelectionChange();
+    setMessage("models-message", body.data.length ? `已加载 ${body.data.length} 个模型，可直接在下拉框中选择。` : "账户目录暂未返回可选模型。");
   } catch (error) {
     if (epoch !== uiEpoch || requestToken !== modelRequestToken) return;
     clearModels();
-    $("transcript").textContent += `
-[模型目录] ${error.message}
-`;
+    $("transcript").textContent += `\n[模型目录] ${error.message}\n`;
   }
 }
 
 async function sendTest() {
   const epoch = uiEpoch;
   const prompt = value("prompt");
-  const model = value("model");
+  let model = value("model");
+  if (model === "__custom__") {
+    model = value("custom-model-input");
+  }
   if (!prompt || !model) {
-    $("transcript").textContent += "\n请填写模型和消息。\n";
+    $("transcript").textContent += "\n请选择或填写模型，并输入消息。\n";
     return;
   }
   setBadge("call-badge", "测试中");
@@ -456,8 +499,15 @@ $("connect-button").addEventListener("click", startDeviceLogin);
 $("disconnect-button").addEventListener("click", disconnectCodex);
 $("cancel-login-button").addEventListener("click", cancelDeviceLogin);
 $("models-button").addEventListener("click", loadModels);
-$("model").addEventListener("input", updateReasoningOptions);
-$("model").addEventListener("change", updateReasoningOptions);
+$("model").addEventListener("change", handleModelSelectionChange);
+$("custom-model-input")?.addEventListener("input", updateReasoningOptions);
+$("open-create-key-modal")?.addEventListener("click", () => {
+  $("api-key-form").reset();
+  $("key-allowlist-wrap").classList.add("hidden");
+  $("key-create-dialog")?.showModal();
+});
+$("cancel-create-key-btn")?.addEventListener("click", () => $("key-create-dialog")?.close());
+$("key-create-dialog")?.querySelector(".modal-close-btn")?.addEventListener("click", () => $("key-create-dialog")?.close());
 $("send-button").addEventListener("click", sendTest);
 $("stop-button").addEventListener("click", () => requestController?.abort());
 $("clear-button").addEventListener("click", () => { conversation = []; $("transcript").textContent = ""; });
@@ -479,7 +529,7 @@ function parseList(text) { return String(text || "").split(/[\s,，]+/).map((s) 
 function numericOrNull(id) { const raw = value(id); return raw === "" ? null : Number(raw); }
 function keyPayload(prefix = "") {
   const all = $(`${prefix}key-models-all`).checked;
-  const models = all ? [] : parseList($( `${prefix}key-allowlist`).value);
+  const models = all ? [] : parseList($(`${prefix}key-allowlist`).value);
   return {
     name: value(prefix ? "edit-key-name" : "api-key-name"),
     expiresAt: $(`${prefix}key-expires`).value ? new Date($(`${prefix}key-expires`).value).getTime() : null,
@@ -488,26 +538,150 @@ function keyPayload(prefix = "") {
     concurrencyLimit: numericOrNull(`${prefix}key-concurrency`)
   };
 }
+
+function formatResetTime(resetsAt, resetsInSeconds) {
+  let targetMs = resetsAt;
+  if (targetMs == null && resetsInSeconds != null) {
+    targetMs = Date.now() + resetsInSeconds * 1000;
+  }
+  if (targetMs == null) return "重置时间：未知";
+  const resetDate = new Date(targetMs);
+  if (isNaN(resetDate.getTime())) return "重置时间：未知";
+
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const hours = pad(resetDate.getHours());
+  const minutes = pad(resetDate.getMinutes());
+  const timeStr = `${hours}:${minutes}`;
+
+  const isToday = resetDate.getFullYear() === now.getFullYear() &&
+                  resetDate.getMonth() === now.getMonth() &&
+                  resetDate.getDate() === now.getDate();
+
+  if (isToday) {
+    return `${timeStr} 重置`;
+  }
+  return `${resetDate.getMonth() + 1}月${resetDate.getDate()}日 ${timeStr} 重置`;
+}
+
+function planInfo(plan) {
+  if (!plan) return { label: "未授权", cls: "plan-unknown" };
+  const p = String(plan).toLowerCase();
+  if (p.includes("team")) return { label: "ChatGPT Team", cls: "plan-team" };
+  if (p.includes("plus")) return { label: "ChatGPT Plus", cls: "plan-plus" };
+  if (p.includes("pro")) return { label: "ChatGPT Pro", cls: "plan-pro" };
+  if (p.includes("free")) return { label: "ChatGPT Free", cls: "plan-free" };
+  return { label: String(plan), cls: "plan-unknown" };
+}
+
 function setQuota(card, win) {
+  if (!card) return;
   const remaining = card.querySelector("[data-quota-remaining]");
   const meta = card.querySelector("[data-quota-meta]");
   const reset = card.querySelector("[data-quota-reset]");
   const status = card.querySelector("[data-quota-status]");
-  if (!win) { remaining.textContent = "未知"; meta.textContent = "未返回此额度窗口"; reset.textContent = "重置时间：未知"; status.textContent = "未知"; return; }
-  remaining.textContent = win.remainingPercent == null ? "未知" : `${win.remainingPercent}%`;
-  meta.textContent = win.usedPercent == null ? "已用：未知" : `已用 ${win.usedPercent}%`;
-  reset.textContent = `重置时间：${fmtTime(win.resetsAt)}`;
-  status.textContent = win.remainingPercent == null ? "未知" : "已获取";
+  const bar = card.querySelector("[data-quota-bar]");
+  if (!win) {
+    if (remaining) remaining.textContent = "--%";
+    if (meta) meta.textContent = "未获取额度数据";
+    if (reset) reset.textContent = "重置时间：未知";
+    if (status) { status.textContent = "未知"; status.className = "badge"; }
+    if (bar) { bar.style.width = "0%"; bar.className = "quota-progress-fill bar-good"; }
+    return;
+  }
+  const rem = win.remainingPercent;
+  const used = win.usedPercent;
+  if (remaining) remaining.textContent = rem == null ? "未知" : `${rem}%`;
+  if (meta) meta.textContent = used == null ? "已用：未知" : `已用 ${used}%`;
+  if (reset) reset.textContent = formatResetTime(win.resetsAt, win.resetsInSeconds);
+  let statusText = "已获取";
+  let statusClass = "badge";
+  let barClass = "quota-progress-fill bar-good";
+  if (rem != null) {
+    if (rem > 50) {
+      statusText = "额度充裕";
+      statusClass = "badge badge-good";
+      barClass = "quota-progress-fill bar-good";
+    } else if (rem >= 20) {
+      statusText = "额度偏低";
+      statusClass = "badge badge-warning";
+      barClass = "quota-progress-fill bar-warning";
+    } else {
+      statusText = "即将耗尽";
+      statusClass = "badge badge-danger";
+      barClass = "quota-progress-fill bar-danger";
+    }
+  }
+  if (status) { status.textContent = statusText; status.className = statusClass; }
+  if (bar) {
+    bar.style.width = rem == null ? "0%" : `${Math.max(0, Math.min(100, rem))}%`;
+    bar.className = barClass;
+  }
 }
+
+function updateAccountDetailCard(account, connected, reauth) {
+  const card = $("account-active-card");
+  if (!card) return;
+  const email = $("acc-detail-email");
+  const planBadge = $("acc-plan-badge");
+  const idEl = $("acc-detail-id");
+  const tokenEl = $("acc-detail-token-status");
+  const refreshedEl = $("acc-detail-refreshed");
+  const avatar = $("acc-avatar");
+  if (!connected || !account) {
+    if (email) email.textContent = "尚未连接 Codex 账户";
+    if (planBadge) { planBadge.textContent = "未授权"; planBadge.className = "plan-tag plan-unknown"; }
+    if (idEl) idEl.textContent = "连接后即可加载账户模型并在本网关中正常调用。";
+    if (tokenEl) { tokenEl.textContent = "未连接"; tokenEl.style.color = "var(--muted)"; }
+    if (refreshedEl) refreshedEl.textContent = "--";
+    if (avatar) avatar.textContent = "C";
+    return;
+  }
+  const info = planInfo(account.plan);
+  if (email) email.textContent = account.email || "已连接（未提供邮箱）";
+  if (planBadge) { planBadge.textContent = info.label; planBadge.className = `plan-tag ${info.cls}`; }
+  if (idEl) idEl.textContent = `账号识别码：${account.id || account.idHint || "未知"}`;
+  if (tokenEl) {
+    const expired = account.tokenExpiresAt != null && account.tokenExpiresAt <= Date.now();
+    tokenEl.textContent = reauth ? "需要重新连接" : expired ? "已过期（等待刷新）" : "正常有效";
+    tokenEl.style.color = reauth || expired ? "var(--danger)" : "var(--accent)";
+  }
+  if (refreshedEl) refreshedEl.textContent = fmtTime(account.lastRefreshAt);
+  if (avatar) {
+    const letter = (account.email?.[0] || account.plan?.[0] || "C").toUpperCase();
+    avatar.textContent = letter;
+  }
+}
+
 function clearAccountOverview() {
   $("account-email").textContent = "未知";
-  $("account-plan").textContent = "未知";
+  if ($("account-plan")) $("account-plan").value = "";
+  const planBadge = $("account-plan-badge");
+  if (planBadge) {
+    planBadge.textContent = "未知套餐";
+    planBadge.className = "plan-tag plan-unknown";
+  }
   $("account-identity").textContent = "未知";
   $("account-updated").textContent = "未知";
-  setQuota(document.querySelector('[data-window="5h"]'), null);
-  setQuota(document.querySelector('[data-window="7d"]'), null);
-  $("additional-quotas").replaceChildren();
+  $("quota-error-alert")?.classList.add("hidden");
+  $("quota-block-general")?.classList.remove("hidden");
+  $("quota-card-general-5h")?.classList.remove("hidden");
+  $("quota-card-general-7d")?.classList.remove("hidden");
+  $("quota-block-spark")?.classList.remove("hidden");
+  $("quota-card-spark-5h")?.classList.remove("hidden");
+  $("quota-card-spark-7d")?.classList.remove("hidden");
+  $("quota-block-review")?.classList.remove("hidden");
+  $("quota-card-review")?.classList.remove("hidden");
+  setQuota($("quota-card-general-5h"), null);
+  setQuota($("quota-card-general-7d"), null);
+  setQuota($("quota-card-spark-5h"), null);
+  setQuota($("quota-card-spark-7d"), null);
+  setQuota($("quota-card-review"), null);
+  const otherBlock = $("other-quotas-block");
+  if (otherBlock) otherBlock.classList.add("hidden");
+  if ($("additional-quotas")) $("additional-quotas").replaceChildren();
   setMessage("account-overview-message", "");
+  updateAccountDetailCard(null, false, false);
 }
 function setDefaultReasoningOption(label = "上游默认") {
   const option = document.createElement("option");
@@ -516,7 +690,10 @@ function setDefaultReasoningOption(label = "上游默认") {
   $("reasoning-effort").replaceChildren(option);
 }
 function updateReasoningOptions() {
-  const modelId = value("model");
+  let modelId = value("model");
+  if (modelId === "__custom__") {
+    modelId = value("custom-model-input");
+  }
   const previous = value("reasoning-effort");
   if (!modelId || !modelCapabilities.has(modelId)) {
     setDefaultReasoningOption();
@@ -548,8 +725,14 @@ function updateReasoningOptions() {
 }
 function clearModels() {
   modelCapabilities.clear();
-  $("models").replaceChildren();
-  $("model").value = "";
+  const select = $("model");
+  select.replaceChildren();
+  const opt = document.createElement("option");
+  opt.value = "";
+  opt.textContent = "请点击“加载模型”获取目录";
+  select.append(opt);
+  $("custom-model-wrap")?.classList.add("hidden");
+  if ($("custom-model-input")) $("custom-model-input").value = "";
   setDefaultReasoningOption();
   $("reasoning-effort").value = "";
   setMessage("models-message", "");
@@ -564,26 +747,165 @@ async function loadAccountOverview(force = false, inheritedToken = null) {
     if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
     const account = status.account;
     $("account-email").textContent = unknown(account?.email);
-    $("account-plan").textContent = unknown(account?.plan);
+    const pInfo = planInfo(account?.plan);
+    const planBadge = $("account-plan-badge");
+    if (planBadge) {
+      planBadge.textContent = pInfo.label;
+      planBadge.className = `plan-tag ${pInfo.cls}`;
+    }
+    if ($("account-plan")) $("account-plan").value = account?.plan || "";
     $("account-identity").textContent = unknown(account?.id || account?.idHint);
     $("account-updated").textContent = fmtTime(account?.lastRefreshAt);
+    updateAccountDetailCard(account, status.connected, status.reauthenticationRequired);
+
     const usage = await (await adminCall(`/admin/usage${force ? "?refresh=true" : ""}`)).json();
     if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
-    setQuota(document.querySelector('[data-window="5h"]'), usage.windows?.fiveHour);
-    setQuota(document.querySelector('[data-window="7d"]'), usage.windows?.sevenDay);
-    const extra = $("additional-quotas");
-    extra.replaceChildren();
-    for (const win of usage.additional || []) {
-      const card = document.createElement("article"); card.className = "quota-card additional-quota";
-      const title = document.createElement("strong"); title.textContent = win.label || win.limitId || "其他窗口";
-      const amount = document.createElement("div"); amount.className = "quota-number"; amount.textContent = win.remainingPercent == null ? "未知" : `${win.remainingPercent}%`;
-      const detail = document.createElement("p"); detail.textContent = `已用：${win.usedPercent == null ? "未知" : win.usedPercent + "%"} · 重置：${fmtTime(win.resetsAt)}`;
-      card.append(title, amount, detail); extra.append(card);
+
+    const isAvailable = usage.available !== false;
+    const errAlert = $("quota-error-alert");
+
+    if (!isAvailable) {
+      const hint = usage.error?.message || "未能从官方同步额度数据";
+      setMessage("account-overview-message", `获取官方额度失败：${hint}`, "error");
+      if (errAlert) {
+        errAlert.classList.remove("hidden");
+        const msgEl = $("quota-error-message");
+        if (msgEl) msgEl.textContent = `${hint}（请检查官方账户连接或网络后点击上方“刷新数据”重试）`;
+      }
+      $("quota-block-general")?.classList.add("hidden");
+      $("quota-block-spark")?.classList.add("hidden");
+      $("quota-block-review")?.classList.add("hidden");
+      $("other-quotas-block")?.classList.add("hidden");
+      return;
     }
-    setMessage("account-overview-message", usage.available === false ? (usage.error?.message || "额度暂时未获取，稍后可重试。") : `额度数据更新于 ${fmtTime(usage.fetchedAt)}`);
+
+    if (errAlert) errAlert.classList.add("hidden");
+
+    const isSpark = (w) => {
+      const l = (w.label || "").toLowerCase();
+      const id = (w.limitId || "").toLowerCase();
+      return l.includes("spark") || id.includes("spark") || l.includes("bengalfox") || id.includes("bengalfox");
+    };
+    const isReview = (w) => {
+      const l = (w.label || "").toLowerCase();
+      const id = (w.limitId || "").toLowerCase();
+      return l.includes("review") || id.includes("review") || l.includes("审查") || id.includes("审查");
+    };
+
+    const addList = Array.isArray(usage.additional) ? usage.additional : [];
+    const sparkWindows = addList.filter(isSpark);
+    const reviewWindows = addList.filter(isReview);
+    const otherWindows = addList.filter((w) => !sparkWindows.includes(w) && !reviewWindows.includes(w));
+
+    let spark5h = sparkWindows.find((w) => w.windowDurationMins != null && w.windowDurationMins <= 360) || null;
+    let spark7d = sparkWindows.find((w) => w.windowDurationMins != null && w.windowDurationMins > 360) || null;
+    if (!spark5h && !spark7d && sparkWindows.length > 0) {
+      spark5h = sparkWindows[0];
+      if (sparkWindows.length > 1) spark7d = sparkWindows[1];
+    }
+    const reviewWin = reviewWindows[0] || null;
+
+    // 1. 常规额度：如果没有 5 小时限制就不显示 5 小时卡片
+    const gen5h = usage.windows?.fiveHour || null;
+    const gen7d = usage.windows?.sevenDay || null;
+    const cardGen5h = $("quota-card-general-5h");
+    const cardGen7d = $("quota-card-general-7d");
+    const blockGen = $("quota-block-general");
+
+    if (gen5h) {
+      cardGen5h?.classList.remove("hidden");
+      setQuota(cardGen5h, gen5h);
+    } else {
+      cardGen5h?.classList.add("hidden");
+    }
+
+    if (gen7d) {
+      cardGen7d?.classList.remove("hidden");
+      setQuota(cardGen7d, gen7d);
+    } else {
+      cardGen7d?.classList.add("hidden");
+    }
+
+    if (!gen5h && !gen7d) {
+      blockGen?.classList.add("hidden");
+    } else {
+      blockGen?.classList.remove("hidden");
+    }
+
+    // 2. GPT-5.3-Codex-Spark 额度：如果没有 5 小时限制就不显示 5 小时卡片；无 Spark 则隐藏整个板块
+    const cardSpark5h = $("quota-card-spark-5h");
+    const cardSpark7d = $("quota-card-spark-7d");
+    const blockSpark = $("quota-block-spark");
+
+    if (spark5h) {
+      cardSpark5h?.classList.remove("hidden");
+      setQuota(cardSpark5h, spark5h);
+    } else {
+      cardSpark5h?.classList.add("hidden");
+    }
+
+    if (spark7d) {
+      cardSpark7d?.classList.remove("hidden");
+      setQuota(cardSpark7d, spark7d);
+    } else {
+      cardSpark7d?.classList.add("hidden");
+    }
+
+    if (!spark5h && !spark7d) {
+      blockSpark?.classList.add("hidden");
+    } else {
+      blockSpark?.classList.remove("hidden");
+    }
+
+    // 3. 代码审查：无审查配额则隐藏该板块
+    const blockReview = $("quota-block-review");
+    const cardReview = $("quota-card-review");
+    if (reviewWin) {
+      blockReview?.classList.remove("hidden");
+      cardReview?.classList.remove("hidden");
+      setQuota(cardReview, reviewWin);
+    } else {
+      blockReview?.classList.add("hidden");
+    }
+
+    // 4. 其他拓展额度
+    const otherBlock = $("other-quotas-block");
+    const extra = $("additional-quotas");
+    if (extra) {
+      extra.replaceChildren();
+      if (otherWindows.length > 0) {
+        if (otherBlock) otherBlock.classList.remove("hidden");
+        for (const win of otherWindows) {
+          const card = document.createElement("article");
+          card.className = "quota-card additional-quota";
+          card.innerHTML = `
+            <div class="quota-head"><div class="quota-title-wrap"><strong>${unknown(win.label || win.limitId || "其他窗口")}</strong></div><span class="badge" data-quota-status>未知</span></div>
+            <div class="quota-progress-box"><div class="quota-progress-track"><div class="quota-progress-fill bar-good" data-quota-bar style="width: 0%"></div></div></div>
+            <div class="quota-stat-row"><div class="quota-numbers"><div class="quota-number" data-quota-remaining>--%</div><span class="stat-caption">剩余额度</span></div><div class="quota-meta-col"><span class="quota-meta-text" data-quota-meta>未获取额度数据</span><span class="quota-reset-text" data-quota-reset>重置时间：未知</span></div></div>
+          `;
+          setQuota(card, win);
+          extra.append(card);
+        }
+      } else {
+        if (otherBlock) otherBlock.classList.add("hidden");
+      }
+    }
+
+    setMessage("account-overview-message", `额度数据更新于 ${fmtTime(usage.fetchedAt)}`);
   } catch (error) {
     if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
-    setMessage("account-overview-message", "账户或额度读取失败：" + error.message);
+    const msg = "账户或额度读取失败：" + error.message;
+    setMessage("account-overview-message", msg, "error");
+    const errAlert = $("quota-error-alert");
+    if (errAlert) {
+      errAlert.classList.remove("hidden");
+      const msgEl = $("quota-error-message");
+      if (msgEl) msgEl.textContent = `${error.message}（请检查服务连接状态后重试）`;
+    }
+    $("quota-block-general")?.classList.add("hidden");
+    $("quota-block-spark")?.classList.add("hidden");
+    $("quota-block-review")?.classList.add("hidden");
+    $("other-quotas-block")?.classList.add("hidden");
   }
 }
 async function checkStatus() {
@@ -594,6 +916,7 @@ async function checkStatus() {
     if (epoch !== uiEpoch || requestToken !== accountRequestToken) return;
     setBadge("account-badge", body.connected ? "已连接" : body.reauthenticationRequired ? "需要重新连接" : "未连接");
     setMessage("account-message", body.connected ? `账户 ${body.account?.idHint || "已连接"} 已保存。` : "当前没有可用的 Codex 连接。");
+    updateAccountDetailCard(body.account, body.connected, body.reauthenticationRequired);
     if (body.login?.status === "pending") showDeviceLogin(body.login);
     await loadAccountOverview(false, requestToken);
   } catch (error) {
@@ -676,6 +999,7 @@ async function createApiKey(event) {
     const created = await (await adminCall("/admin/api-keys", { method: "POST", body: JSON.stringify(keyPayload()) })).json();
     if (epoch !== uiEpoch) return;
     $("api-key-name").value = ""; $("key-allowlist").value = ""; $("key-expires").value = ""; $("key-rpm").value = ""; $("key-concurrency").value = "";
+    if ($("key-create-dialog")?.open) $("key-create-dialog").close();
     $("created-key").textContent = created.key || ""; $("created-key-panel").classList.remove("hidden");
     await loadApiKeys();
   } catch (error) { if (epoch === uiEpoch) setMessage("api-key-message", error.message); }
@@ -696,7 +1020,7 @@ async function saveKeyEditor() {
 }
 let editKeyIsLegacy = false; let logKeyId = null, logCursor = null, logNextCursor = null, logCursorStack = [], logPage = 1;
 function openLogs(key) { const alreadyInLogs = routeFromHash() === "logs"; logKeyId = key.id; $("logs-key-id").value = key.id; $("logs-key-label").textContent = `${key.name || "key"} · ${key.masked || key.id}`; logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; navigateTo("logs"); if (alreadyInLogs) loadLogs(); }
-function closeLogs() { logListRequestToken += 1; logDetailRequestToken += 1; $("log-detail").classList.add("hidden"); navigateTo("keys"); }
+function closeLogs() { logListRequestToken += 1; logDetailRequestToken += 1; if ($("log-detail-dialog")?.open) $("log-detail-dialog").close(); navigateTo("keys"); }
 
 function logValue(obj, ...names) { for (const n of names) if (obj?.[n] != null) return obj[n]; return null; }
 function bodyIsExpired(log) { return log?.bodyExpired === true || (log?.bodyExpired === undefined && log?.bodyExpiresAt != null && log.bodyExpiresAt <= Date.now()); }
@@ -710,52 +1034,189 @@ function filterLogsToKey(keyId, keyName) {
   logPage = 1;
   loadLogs();
 }
+const logDetailCache = new Map();
+let currentDetailLog = null;
+
+async function openLogDetailModal(logId) {
+  const dialog = $("log-detail-dialog");
+  if (!dialog) return;
+
+  $("modal-log-title").textContent = `调用日志详情`;
+  $("modal-log-status").textContent = "加载中…";
+  $("modal-log-status").className = "status-tag";
+  $("modal-log-model").textContent = "--";
+  $("modal-log-latency").textContent = "--";
+  $("modal-log-time").textContent = "--";
+  $("modal-log-meta").replaceChildren();
+  $("modal-log-bodies").innerHTML = '<p class="muted">正在读取完整请求与响应正文…</p>';
+
+  dialog.showModal();
+
+  try {
+    let detail = logDetailCache.get(logId);
+    if (!detail) {
+      detail = await (await adminCall(`/admin/logs/${encodeURIComponent(logId)}`)).json();
+      logDetailCache.set(logId, detail);
+    }
+    currentDetailLog = detail;
+
+    const outcome = String(logValue(detail, "outcome", "status") || "unknown");
+    const outcomeCls = outcome === "completed" ? "status-completed" : outcome === "error" ? "status-error" : outcome === "cancelled" ? "status-cancelled" : "status-incomplete";
+    const outcomeText = outcome === "completed" ? "完成" : outcome === "error" ? "错误" : outcome === "cancelled" ? "已取消" : outcome;
+    $("modal-log-status").textContent = `${detail.httpStatus ? detail.httpStatus + " · " : ""}${outcomeText}`;
+    $("modal-log-status").className = `status-tag ${outcomeCls}`;
+    $("modal-log-model").textContent = unknown(logValue(detail, "model", "modelId"));
+    $("modal-log-latency").textContent = detail.durationMs == null ? "耗时未知" : `${detail.durationMs} ms`;
+    $("modal-log-time").textContent = fmtTime(detail.completedAt || detail.startedAt);
+
+    const meta = $("modal-log-meta");
+    meta.replaceChildren();
+    const bodyExpired = bodyIsExpired(detail);
+    const bodyStatus = bodyExpired
+      ? "正文已过期"
+      : detail.bodyCaptured === false
+        ? "本次请求未开启正文记录"
+        : "正文已记录";
+    const fields = [
+      ["请求 ID", logValue(detail, "requestId", "id")],
+      ["key 名称", detail.keyName],
+      ["key ID", detail.keyId],
+      ["协议", detail.protocol === "chat" ? "Chat" : "Responses"],
+      ["模型", logValue(detail, "model", "modelId")],
+      ["HTTP 状态", detail.httpStatus ?? "--"],
+      ["开始时间", fmtTime(detail.startedAt)],
+      ["完成时间", fmtTime(detail.completedAt)],
+      ["耗时", detail.durationMs == null ? "未知" : detail.durationMs + " ms"],
+      ["token usage", JSON.stringify(detail.usage || detail.tokenUsage || null)],
+      ["未生效参数", Array.isArray(detail.ignoredParameters) && detail.ignoredParameters.length > 0 ? detail.ignoredParameters.join(", ") : "无"],
+      ["正文状态", bodyStatus],
+      ["正文到期", detail.bodyExpiresAt == null ? "未记录或未设期限" : fmtTime(detail.bodyExpiresAt)]
+    ];
+    for (const [label, val] of fields) {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = unknown(val);
+      meta.append(dt, dd);
+    }
+
+    const bodies = $("modal-log-bodies");
+    bodies.replaceChildren();
+    const addBody = (label, body, truncated) => {
+      const wrap = document.createElement("div");
+      const h = document.createElement("h4");
+      h.textContent = label;
+      const status = document.createElement("p");
+      status.className = "muted";
+      if (bodyExpired) status.textContent = "正文已过期并清理，无法恢复。";
+      else if (truncated) status.textContent = "正文超过采集上限，已截断；下面仅显示保留片段。";
+      else if (body == null && detail.bodyCaptured === false) status.textContent = "本次请求未开启正文记录。可在“设置”中开启。";
+      else if (body == null) status.textContent = "正文未完成或不可用。";
+      else status.textContent = detail.bodyExpiresAt == null ? "正文已记录。" : `正文保留至 ${fmtTime(detail.bodyExpiresAt)}。`;
+      const pre = document.createElement("pre");
+      pre.className = "body-preview";
+      pre.textContent = body == null ? "无可显示正文。" : typeof body === "string" ? body : JSON.stringify(body, null, 2);
+      wrap.append(h, status, pre);
+      bodies.append(wrap);
+    };
+
+    addBody("请求正文 (Prompt / Input)", detail.requestBody, Boolean(detail.requestTruncated));
+    addBody("响应正文 (Response / Output)", detail.responseBody, Boolean(detail.responseTruncated));
+  } catch (err) {
+    $("modal-log-bodies").innerHTML = `<p class="message">加载详情失败：${err.message}</p>`;
+  }
+}
+
 function renderLog(log) {
-  const row = document.createElement("article");
-  row.className = "log-row";
-  const main = document.createElement("div");
-  const title = document.createElement("strong");
-  title.textContent = `${unknown(logValue(log, "model", "modelId"))} · ${unknown(logValue(log, "outcome", "status"))}`;
-  const keyMeta = document.createElement("span");
+  const card = document.createElement("article");
+  card.className = "log-card";
+
+  const outcome = String(logValue(log, "outcome", "status") || "unknown");
+  const outcomeCls = outcome === "completed" ? "status-completed" : outcome === "error" ? "status-error" : outcome === "cancelled" ? "status-cancelled" : "status-incomplete";
+  const outcomeText = outcome === "completed" ? "完成" : outcome === "error" ? "错误" : outcome === "cancelled" ? "已取消" : outcome;
+
   const keyId = logValue(log, "keyId");
   const keyName = logValue(log, "keyName");
-  keyMeta.textContent = `key：${unknown(keyName)} · ${unknown(keyId)}`;
-  const meta = document.createElement("span");
-  meta.textContent = `${fmtTime(logValue(log, "startedAt", "createdAt"))} · ${unknown(logValue(log, "requestId", "id"))} · ${logValue(log, "durationMs", "latencyMs", "elapsedMs") == null ? "耗时：未知" : "耗时：" + logValue(log, "durationMs", "latencyMs", "elapsedMs") + " ms"}`;
+  const model = unknown(logValue(log, "model", "modelId"));
+  const protocol = log.protocol === "chat" ? "Chat" : "Responses";
+  const duration = logValue(log, "durationMs", "latencyMs", "elapsedMs");
+  const durationText = duration == null ? "耗时未知" : `${duration} ms`;
+  const requestId = String(logValue(log, "requestId", "id") || "");
+
   const usage = log.usage || {};
   const tokens = logValue(log, "tokenUsage", "tokens", "usage") || usage;
-  const tok = typeof tokens === "object" ? `输入 ${tokens.inputTokens ?? tokens.promptTokens ?? "未知"} / 输出 ${tokens.outputTokens ?? tokens.completionTokens ?? "未知"} / 总计 ${tokens.totalTokens ?? "未知"}` : unknown(tokens);
-  const sub = document.createElement("span");
-  sub.textContent = `token usage：${tok}`;
-  const ignored = document.createElement("span");
-  ignored.textContent = `未生效参数：${Array.isArray(log.ignoredParameters) && log.ignoredParameters.length > 0 ? log.ignoredParameters.join(", ") : "无"}`;
-  const bodyState = document.createElement("span");
-  const bodyFlags = [];
-  if (bodyIsExpired(log)) {
-    bodyFlags.push("正文已过期");
-  } else {
-    if (log.bodyCaptured === false) bodyFlags.push("未记录正文");
-    if (log.requestTruncated) bodyFlags.push("请求正文已截断");
-    if (log.responseTruncated) bodyFlags.push("响应正文已截断");
-  }
-  bodyState.textContent = bodyFlags.length ? bodyFlags.join(" · ") : "正文状态：未截断";
-  main.append(title, keyMeta, meta, sub, ignored, bodyState);
-  const actions = document.createElement("div");
-  actions.className = "key-actions";
-  const view = document.createElement("button");
-  view.type = "button";
-  view.className = "secondary";
-  view.textContent = "查看详情";
-  view.addEventListener("click", () => loadLogDetail(log.id));
-  const filter = document.createElement("button");
-  filter.type = "button";
-  filter.className = "secondary";
-  filter.textContent = "筛选此 key";
-  filter.disabled = keyId == null || keyId === "";
-  filter.addEventListener("click", () => filterLogsToKey(String(keyId), keyName));
-  actions.append(view, filter);
-  row.append(main, actions);
-  return row;
+  const inTok = tokens?.inputTokens ?? tokens?.promptTokens ?? "-";
+  const outTok = tokens?.outputTokens ?? tokens?.completionTokens ?? "-";
+  const totTok = tokens?.totalTokens ?? "-";
+
+  const headRow = document.createElement("div");
+  headRow.className = "log-header-row";
+
+  const titleArea = document.createElement("div");
+  titleArea.className = "log-title-area";
+  titleArea.innerHTML = `
+    <span class="status-tag ${outcomeCls}">${log.httpStatus ? log.httpStatus + " · " : ""}${outcomeText}</span>
+    <strong class="model-tag">${model}</strong>
+    <span class="proto-tag">${protocol}</span>
+    <span class="latency-text">${durationText}</span>
+    <span class="muted">${fmtTime(logValue(log, "startedAt", "createdAt"))}</span>
+  `;
+
+  const actionsArea = document.createElement("div");
+  actionsArea.className = "log-actions";
+
+  const detailBtn = document.createElement("button");
+  detailBtn.type = "button";
+  detailBtn.className = "secondary";
+  detailBtn.textContent = "查看详情";
+  detailBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openLogDetailModal(log.id);
+  });
+
+  const copyIdBtn = document.createElement("button");
+  copyIdBtn.type = "button";
+  copyIdBtn.className = "secondary";
+  copyIdBtn.textContent = "复制 ID";
+  copyIdBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    copyText(requestId, "logs-message");
+  });
+
+  const filterBtn = document.createElement("button");
+  filterBtn.type = "button";
+  filterBtn.className = "secondary";
+  filterBtn.textContent = "筛选此 key";
+  filterBtn.disabled = !keyId;
+  filterBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    filterLogsToKey(String(keyId), keyName);
+  });
+
+  actionsArea.append(detailBtn, copyIdBtn, filterBtn);
+  headRow.append(titleArea, actionsArea);
+
+  const bodyRow = document.createElement("div");
+  bodyRow.className = "log-body-row";
+
+  const chipsArea = document.createElement("div");
+  chipsArea.className = "log-info-chips";
+  chipsArea.innerHTML = `
+    <span class="chip">Key: <strong>${unknown(keyName)}</strong></span>
+    <span class="chip">Tokens: <strong>${inTok} / ${outTok} (总计 ${totTok})</strong></span>
+    ${log.bodyCaptured ? '<span class="chip" style="color:var(--accent);">已记录正文</span>' : '<span class="chip muted">无正文</span>'}
+    ${log.requestTruncated || log.responseTruncated ? '<span class="chip" style="color:var(--danger);">有截断</span>' : ''}
+  `;
+
+  const reqIdSnippet = document.createElement("span");
+  reqIdSnippet.className = "muted";
+  reqIdSnippet.style.fontFamily = "ui-monospace, monospace";
+  reqIdSnippet.textContent = requestId.length > 18 ? `ID: …${requestId.slice(-12)}` : `ID: ${requestId}`;
+
+  bodyRow.append(chipsArea, reqIdSnippet);
+
+  card.append(headRow, bodyRow);
+  return card;
 }
 async function loadLogs() {
   const epoch = uiEpoch;
@@ -795,87 +1256,6 @@ async function loadLogs() {
     if (epoch === uiEpoch && requestToken === logListRequestToken) setMessage("logs-message", error.message);
   }
 }
-
-async function loadLogDetail(id) {
-  const epoch = uiEpoch;
-  const requestToken = ++logDetailRequestToken;
-  try {
-    const detail = await (await adminCall(`/admin/logs/${encodeURIComponent(id)}`)).json();
-    if (epoch !== uiEpoch || requestToken !== logDetailRequestToken) return;
-    $("log-detail").classList.remove("hidden");
-    $("log-detail-status").textContent = unknown(logValue(detail, "outcome", "status"));
-    const meta = $("log-detail-meta");
-    meta.replaceChildren();
-    const bodyExpired = bodyIsExpired(detail);
-    const bodyStatus = bodyExpired
-      ? "正文已过期"
-      : detail.bodyCaptured === false
-        ? "本次请求未开启正文记录"
-        : "正文已记录";
-    const fields = [
-      ["请求 ID", logValue(detail, "requestId", "id")],
-      ["key 名称", detail.keyName],
-      ["key ID", detail.keyId],
-      ["协议", detail.protocol],
-      ["模型", logValue(detail, "model", "modelId")],
-      ["状态", logValue(detail, "outcome", "status")],
-      ["HTTP 状态", detail.httpStatus],
-      ["开始", fmtTime(detail.startedAt)],
-      ["完成", fmtTime(detail.completedAt)],
-      ["耗时", detail.durationMs == null ? "未知" : detail.durationMs + " ms"],
-      ["token usage", JSON.stringify(detail.usage || detail.tokenUsage || null)],
-      ["未生效参数", Array.isArray(detail.ignoredParameters) && detail.ignoredParameters.length > 0 ? detail.ignoredParameters.join(", ") : "无"],
-      ["正文状态", bodyStatus],
-      ["正文到期", detail.bodyExpiresAt == null ? "不适用" : fmtTime(detail.bodyExpiresAt)]
-    ];
-    for (const [label, val] of fields) {
-      const dt = document.createElement("dt");
-      dt.textContent = label;
-      const dd = document.createElement("dd");
-      dd.textContent = unknown(val);
-      meta.append(dt, dd);
-    }
-    const bodies = $("log-detail-bodies");
-    bodies.replaceChildren();
-    const addBody = (label, body, truncated) => {
-      const wrap = document.createElement("div");
-      const h = document.createElement("h4");
-      h.textContent = label;
-      const status = document.createElement("p");
-      status.className = "muted";
-      if (bodyExpired) status.textContent = "正文已过期并清理，无法恢复。";
-      else if (truncated) status.textContent = "正文超过采集上限，已截断；下面仅显示保留片段。";
-      else if (body == null && detail.bodyCaptured === false) status.textContent = "本次请求未开启正文记录。";
-      else if (body == null) status.textContent = "正文未完成或不可用。";
-      else status.textContent = detail.bodyExpiresAt == null ? "正文已记录。" : `正文保留至 ${fmtTime(detail.bodyExpiresAt)}。`;
-      const pre = document.createElement("pre");
-      pre.className = "body-preview";
-      pre.textContent = body == null ? "无可显示正文。" : typeof body === "string" ? body : JSON.stringify(body, null, 2);
-      wrap.append(h, status, pre);
-      bodies.append(wrap);
-    };
-    addBody("请求正文", detail.requestBody, Boolean(detail.requestTruncated));
-    addBody("响应正文", detail.responseBody, Boolean(detail.responseTruncated));
-    if (detail.requestBody != null || detail.responseBody != null) {
-      const exportButton = document.createElement("button");
-      exportButton.type = "button";
-      exportButton.className = "secondary";
-      exportButton.textContent = "下载正文";
-      exportButton.addEventListener("click", () => {
-        const blob = new Blob([JSON.stringify(detail, null, 2)], { type: "application/json;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `oneapi-log-${id}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      });
-      bodies.append(exportButton);
-    }
-  } catch (error) {
-    if (epoch === uiEpoch && requestToken === logDetailRequestToken) setMessage("logs-message", error.message);
-  }
-}
 async function loadLogSettings() { const epoch = uiEpoch;
   try { const s = await (await adminCall("/admin/log-settings")).json(); if (epoch !== uiEpoch) return; $("log-body-enabled").checked = Boolean(s.captureBodies); $("log-retention-days").value = s.summaryRetentionDays ?? 30; $("body-retention-days").value = s.bodyRetentionDays ?? 7; $("log-settings-state").textContent = s.captureBodies ? "正文已开启" : "正文已关闭"; }
   catch (error) { setMessage("log-settings-message", error.message); }
@@ -884,13 +1264,108 @@ async function saveLogSettings() { const epoch = uiEpoch;
   try { const body = await (await adminCall("/admin/log-settings", { method: "PATCH", body: JSON.stringify({ captureBodies: $("log-body-enabled").checked, summaryRetentionDays: Number($("log-retention-days").value), bodyRetentionDays: Number($("body-retention-days").value) }) })).json(); if (epoch !== uiEpoch) return; $("log-settings-state").textContent = body.captureBodies ? "正文已开启" : "正文已关闭"; setMessage("log-settings-message", "日志设置已保存。"); }
   catch (error) { setMessage("log-settings-message", error.message); }
 }
-$("refresh-account-button").addEventListener("click", () => loadAccountOverview(true));
+async function refreshAccountData() {
+  const btn = $("refresh-account-button");
+  btn?.classList.add("refreshing");
+  try {
+    await loadAccountOverview(true);
+  } finally {
+    setTimeout(() => btn?.classList.remove("refreshing"), 600);
+  }
+}
+
+async function copyDeviceCode() {
+  const code = $("user-code")?.textContent.trim();
+  if (!code) return;
+  await navigator.clipboard.writeText(code).catch(() => {});
+  setMessage("account-message", `已复制验证码 ${code} 到剪贴板。`);
+}
+
+async function autoOpenAuth() {
+  const code = $("user-code")?.textContent.trim();
+  const url = $("verification-link")?.href;
+  if (code) {
+    await navigator.clipboard.writeText(code).catch(() => {});
+  }
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+  setMessage("account-message", `已复制验证码 ${code || ""} 并已打开官方授权页面！请在页面中粘贴完成授权。`);
+}
+
+function initQuickTimeFilters() {
+  const pills = document.querySelectorAll("#quick-time-pills .pill-btn");
+  pills.forEach((pill) => {
+    pill.addEventListener("click", () => {
+      pills.forEach((p) => p.classList.remove("active"));
+      pill.classList.add("active");
+      const range = pill.dataset.range;
+      const now = Date.now();
+      if (range === "all") {
+        $("logs-from").value = "";
+        $("logs-to").value = "";
+      } else if (range === "1h") {
+        $("logs-from").value = toLocalInput(now - 3600 * 1000);
+        $("logs-to").value = toLocalInput(now);
+      } else if (range === "24h") {
+        $("logs-from").value = toLocalInput(now - 24 * 3600 * 1000);
+        $("logs-to").value = toLocalInput(now);
+      } else if (range === "7d") {
+        $("logs-from").value = toLocalInput(now - 7 * 24 * 3600 * 1000);
+        $("logs-to").value = toLocalInput(now);
+      }
+      logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1;
+      loadLogs();
+    });
+  });
+}
+
+function resetLogsFilter() {
+  $("logs-key-id").value = "";
+  $("logs-model").value = "";
+  $("logs-status").value = "";
+  $("logs-from").value = "";
+  $("logs-to").value = "";
+  logKeyId = null;
+  $("logs-key-label").textContent = "全部 key";
+  document.querySelectorAll("#quick-time-pills .pill-btn").forEach((p) => {
+    p.classList.toggle("active", p.dataset.range === "all");
+  });
+  logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1;
+  loadLogs();
+}
+
+$("refresh-account-button").addEventListener("click", refreshAccountData);
+$("copy-code-btn")?.addEventListener("click", copyDeviceCode);
+$("auto-open-auth-btn")?.addEventListener("click", autoOpenAuth);
 $("key-models-all").addEventListener("change", () => $("key-allowlist-wrap").classList.add("hidden"));
 $("key-models-allowlist").addEventListener("change", () => $("key-allowlist-wrap").classList.remove("hidden"));
 $("edit-key-models-all").addEventListener("change", fillEditAllowlist); $("edit-key-models-allowlist").addEventListener("change", fillEditAllowlist);
 $("key-edit-save").addEventListener("click", saveKeyEditor);
 $("logs-filter-button").addEventListener("click", () => { logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; loadLogs(); });
+$("logs-reset-button")?.addEventListener("click", resetLogsFilter);
 $("logs-close-button").addEventListener("click", closeLogs); $("logs-next").addEventListener("click", () => { if (!logNextCursor) return; logCursorStack.push(logCursor); logCursor = logNextCursor; logPage += 1; loadLogs(); }); $("logs-prev").addEventListener("click", () => { if (!logCursorStack.length) return; logCursor = logCursorStack.pop(); logPage = Math.max(1, logPage - 1); loadLogs(); }); $("save-log-settings-button").addEventListener("click", saveLogSettings);
 
-
 $("all-logs-button").addEventListener("click", () => { const alreadyInLogs = routeFromHash() === "logs"; logKeyId = null; $("logs-key-id").value = ""; $("logs-key-label").textContent = "全部 key"; logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; navigateTo("logs"); if (alreadyInLogs) loadLogs(); });
+initQuickTimeFilters();
+
+$("modal-log-close-btn")?.addEventListener("click", () => $("log-detail-dialog")?.close());
+$("modal-log-done-btn")?.addEventListener("click", () => $("log-detail-dialog")?.close());
+$("modal-log-copy-id-btn")?.addEventListener("click", () => {
+  if (currentDetailLog) {
+    const id = currentDetailLog.requestId || currentDetailLog.id;
+    copyText(id, "logs-message");
+  }
+});
+$("modal-log-download-btn")?.addEventListener("click", () => {
+  if (currentDetailLog) {
+    const blob = new Blob([JSON.stringify(currentDetailLog, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `oneapi-log-${currentDetailLog.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+});
+

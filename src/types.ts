@@ -110,6 +110,7 @@ export interface UsageWindow {
   usedPercent: number | null;
   remainingPercent: number | null;
   resetsAt: number | null;
+  resetsInSeconds?: number | null;
   windowDurationMins: number | null;
 }
 

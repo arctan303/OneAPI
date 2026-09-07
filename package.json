@@ -6,6 +6,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "dev": "wrangler dev --config wrangler.jsonc",
+    "dev:ui": "vite --config vite.config.mjs",
     "dev:node": "node scripts/dev-local.mjs",
     "test:dev-node": "node scripts/verify-dev-local.mjs",
     "typecheck": "tsc --noEmit",
