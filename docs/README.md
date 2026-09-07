@@ -1,6 +1,6 @@
 # OneAPI 使用说明
 
-更新时间：2026-09-07。当前产品主路径是轻量单服务器：Node.js 24.x（至少 24.15）、一个生产 bundle、一个 Node 进程和一个业务 SQLite 文件。生产运行不依赖 Wrangler/Miniflare/workerd 或外部数据库。本机真实账号与两协议验收完成，原账号无需重新授权。当前结果、包大小及本机内存样本见 [SERVER-001](verification/SERVER-001.md)，用户已有远端Node安装；本轮尚未连接验证其升级。
+更新时间：2026-09-07。当前产品主路径是轻量单服务器：Node.js 24.x（至少 24.15）、一个生产 bundle、一个 Node 进程和一个业务 SQLite 文件。生产运行不依赖 Wrangler/Miniflare/workerd 或外部数据库。本机真实账号与两协议验收完成，原账号无需重新授权。当前结果、包大小及本机内存样本见 [SERVER-001](verification/SERVER-001.md)，用户已有远端Node安装；本轮尚未连接验证其升级。本地已运行[v0.2.0-dev.3](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.3)，一次真实Luna调用及Spark目录验证通过，新安装/旧版升级和发布证据见[RELEASE-004](verification/RELEASE-004.md)。
 
 ## 新服务器流程
 

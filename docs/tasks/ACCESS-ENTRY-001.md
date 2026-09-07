@@ -20,6 +20,6 @@
 
 按用户分批：ACCESS-RETURN-001冻结后先修Spark目录，再实施此路由改动。Node/Worker验证根重定向、两页面外壳、管理API未放宽；隔离浏览器验证未认证/已认证/成功登录/退出、刷新和hash、无跳转循环及390px布局。CF跨域导航由隔离浏览器与合成签名JWT模拟；本轮不声称已在用户远端实机通过。
 
-状态：实现、本地浏览器与针对性验证完成，RELEASE-004 fresh独立审查通过，待dev.3发布。最终fresh R2 reviewer核验整个相关diff；不新增数据库迁移。
+状态：实现、本地浏览器与针对性验证完成，RELEASE-004 fresh独立审查通过，已随dev.3发布。最终fresh R2 reviewer核验整个相关diff；不新增数据库迁移。
 
 实施冻结证据：根路径修复前Worker200/Node query404，预期302；修复后auth+access16/16、Node network+runtime15/15、gateway19/19、JS语法/typecheck/diff检查通过。隔离Chromium（合成账号、无真实上游）验证root/login/admin固定导航、匿名访问带hash后台、登录/退出、刷新hash、已登录再访问login、非法hash回落、390px布局且无pageerror，截图已目视检查。首个命令行传递多行浏览器脚本出现语法错误，改为CLI文档支持的--filename后实际行为检查通过。Edge用户浏览器仍未读取，本轮不声称远端CF实机通过。

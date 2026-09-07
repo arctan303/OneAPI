@@ -4,11 +4,11 @@
 
 ## 活跃计划
 
-当前新增批次（用户要求有序执行）：ACCESS-RETURN-001回跳、SPARK-CATALOG-001目录、ACCESS-ENTRY-001登录路由、PARAM-COMPAT-001窄集合参数兼容与日志均已实施、验证并冻结；完整Worker87/87、Node16/16、HTTP5/5和实际归档新装/旧版升级通过。fresh R2独立审查与本地一次真实Luna调用均通过，Spark已出现在本地真实目录；下一步RELEASE-004发布v0.2.0-dev.3。用户已明确授权提交推送并发布下一开发版；当前未发布，远端Node未更新。
+当前新增批次（用户要求有序执行）：ACCESS-RETURN-001回跳、SPARK-CATALOG-001目录、ACCESS-ENTRY-001登录路由、PARAM-COMPAT-001窄集合参数兼容与日志均已实施、验证并冻结；完整Worker87/87、Node16/16、HTTP5/5和实际归档新装/旧版升级通过。fresh R2独立审查与本地一次真实Luna调用均通过，Spark已出现在本地真实目录；RELEASE-004已发布v0.2.0-dev.3，附件回下载校验通过。用户已明确授权提交推送并发布下一开发版；当前已发布，远端Node未更新。
 
 此前完成：[CONSOLE-NET-001](tasks/CONSOLE-NET-001.md)，命令行网络配置向导、显式私网访问和六区管理后台；本地实施、浏览器验收与网络边界独立复核均已完成，新版已在127.0.0.1:8787启动。已随 v0.2.0-dev.2 测试版推送发布，安装包回下载核对通过，见 [RELEASE-003](verification/RELEASE-003.md)。
 
-最新发布：[v0.2.0-dev.2](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.2) 测试版已推送并发布；安装包与校验和回下载一致，安装和网络教程随包提供。发布证据见 [RELEASE-003](verification/RELEASE-003.md)；上一版记录保留在 [RELEASE-002](verification/RELEASE-002.md)。
+最新发布：[v0.2.0-dev.3](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.3) 开发版已推送并发布；安装包与校验和回下载一致，安装和网络教程随包提供。发布证据见 [RELEASE-004](verification/RELEASE-004.md)；上一版记录保留在 [RELEASE-003](verification/RELEASE-003.md)。
 
 最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。本地8787现运行 v0.2.0-dev.3，账号配置与数据库保留，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
 

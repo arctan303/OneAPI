@@ -33,4 +33,4 @@ R2：缩窄登录返回入口的Fetch Metadata例外可能误放开管理入口�
 
 授权更新：用户在审批解释后明确回复“可以”，授权确切GET /admin/access/login顶层导航例外，完整Access JWT及其他管理接口规则保持；此前自动审批待决已解除。用户补充Spark缺失和CF保护/admin/*导致key登录被边缘拦截，由SPARK-CATALOG-001和首页交互澄清分别承接。
 
-实施冻结：精确回跳导航例外已完成。Worker Access/auth 针对性测试16/16、实际Node HTTP adapter测试9/9、typecheck通过；覆盖无效JWT、错误issuer/audience、管理员Bearer不能代替Access身份、其他管理跨站请求保持拒绝，以及固定303根跳转且无Set-Cookie。最终独立审查与新登录路由合并进行；远端尚未更新。
+实施冻结：精确回跳导航例外已完成。Worker Access/auth 针对性测试16/16、实际Node HTTP adapter测试9/9、typecheck通过；覆盖无效JWT、错误issuer/audience、管理员Bearer不能代替Access身份、其他管理跨站请求保持拒绝，以及固定303根跳转且无Set-Cookie。RELEASE-004最终独立审查已通过，修复随v0.2.0-dev.3发布；远端尚未更新。

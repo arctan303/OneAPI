@@ -23,7 +23,7 @@
 
 第四批已在ACCESS-ENTRY-001冻结后由Sol实施。Mock Hermes式请求包含max_completion_tokens和tools，覆盖Chat JSON/SSE、Responses JSON/SSE，确认只发一次上游、被忽略字段不在上游body、usage真实沿用、响应头正确。覆盖invalid/null/双token字段、未知关键字段拒绝，基础日志及重启保留、UI可见与旧数据库升级。类型检查与适当Node/Worker测试。根代理隔离浏览器验证日志显示；真实gpt-5.6-luna最多一次最短非自动重试验收（已完成一次HTTP200，11输入+5输出=16tokens，基础日志/响应头通过；不声称生产Hermes端到端）。
 
-状态：窄集合兼容和日志代码已实施，隔离浏览器显示验证通过，协议与旧库回归已通过；RELEASE-004独立审查与一次本地真实调用通过，待发布。
+状态：窄集合兼容和日志代码已实施，隔离浏览器显示验证通过，协议与旧库回归已通过；RELEASE-004独立审查与一次本地真实调用通过，已随dev.3发布。
 
 参考：[OpenAI Chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[官方Codex请求结构](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/common.rs)、[shunt适配说明](https://github.com/pleaseai/shunt/blob/main/docs/codex-configuration.md)、[brazen适配说明](https://github.com/mudbungie/brazen)。
 

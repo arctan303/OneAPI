@@ -16,4 +16,4 @@
 
 状态：已实现并冻结，进入登录路由第三批。复用既有Mock目录与运行测试，不消费真实生成配额。无远端更新、无版本标签或附件覆盖。
 
-验证：新增订阅目录用例修复前15项中仅该项失败（预期可见模型但实际空目录）；修复后Worker extensions/gateway共34/34、Node runtime9/9、typecheck与定向diff检查通过。合成目录单独配置，默认fixtures未改变；验证false/list可见、reasoning保留、hide隐藏及key白名单调用拒绝且未到上游。RELEASE-004独立复核已通过；本地真实目录已返回Spark及low/medium/high/xhigh，远端实际目录仍待更新后确认。
+验证：新增订阅目录用例修复前15项中仅该项失败（预期可见模型但实际空目录）；修复后Worker extensions/gateway共34/34、Node runtime9/9、typecheck与定向diff检查通过。合成目录单独配置，默认fixtures未改变；验证false/list可见、reasoning保留、hide隐藏及key白名单调用拒绝且未到上游。RELEASE-004独立复核已通过并随v0.2.0-dev.3发布；本地真实目录已返回Spark及low/medium/high/xhigh，远端实际目录仍待更新后确认。
