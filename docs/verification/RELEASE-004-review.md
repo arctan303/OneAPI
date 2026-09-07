@@ -32,6 +32,8 @@ npx.cmd vitest run test/access.test.ts test/auth.test.ts test/extensions.test.ts
 
 隔离 Chromium 既有证据覆盖登录页、后台、登录/退出、合法与非法 hash、390 px 布局，以及基础日志在未开启正文时显示 `max_output_tokens`；截图使用合成账号，不构成远端实机证明。
 
+独立审查通过且生产代码未再变化后，主会话按门禁只执行一次真实 `gpt-5.6-luna` low 非流式生成，无重试：HTTP 200、正文 `OK`，上游 usage 为 11 输入 + 5 输出 = 16 tokens；响应头和基础日志均显示 `max_completion_tokens`、`temperature`、`top_p` 未生效。一次真实模型目录返回 7 项并包含 Spark 及 low/medium/high/xhigh 档位。该结果补足本地发布证据，不扩大本审查的远端结论。
+
 ## 剩余边界与发布步骤
 
-本结论只批准上述冻结补丁及候选归档，不表示已发布或已部署。审查完成后仍需按 RELEASE-004 执行一次最短真实 `gpt-5.6-luna` 调用、提交推送、草稿附件回下载校验并发布 prerelease；这些结果应回写发布记录。用户远端 Node 尚未更新，真实 Cloudflare `/admin/*` 策略也未实机验收，因此不能声称远端问题已经修复。若生产/测试代码、鉴权条件、日志 schema 或候选归档在此后变化，本结论对受影响部分失效并需聚焦复核。
+本结论只批准上述冻结补丁及候选归档，不表示已发布或已部署。审查后的提交推送、草稿附件回下载校验及 prerelease 发布结果已记入 RELEASE-004；这些发布回执不改变本独立审查范围。用户远端 Node 尚未更新，真实 Cloudflare `/admin/*` 策略也未实机验收，因此不能声称远端问题已经修复。若生产/测试代码、鉴权条件、日志 schema 或候选归档在此后变化，本结论对受影响部分失效并需聚焦复核。
