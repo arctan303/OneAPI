@@ -19,10 +19,23 @@ Access 应用清单为空，identity providers 空，organization 读取 403。�
 
 ## 部署与真实结果
 
-部署前 fresh R2 审查已通过，见 [审查回执](PHASE-02-review.md)。随后 Secrets 上传命令被宿主自动审批在执行前拒绝，理由为需要明确授权所列具体凭据向 oneapi/api.arcinks.com 的敏感出站。已向用户提问等待授权；没有创建 Worker/DO/域名，没有上传或迁移任何凭据，没有真实上游请求。
+用户补充“允许”后，前次宿主敏感出站授权阻碍已解除。2026-09-07 部署代码基线为 4294b99：
 
-本地已加载最终版本，PID 24424（仅本次诊断记录，停止前需重新核对），health200、connected=true、reauthenticationRequired=false、原 keyCount1，Access默认关闭；原账号和存储保留。
+- Worker：oneapi。代码部署版本 64934e7e-ffe1-4200-a98f-180f3fb9eff2；关闭临时导入 Secret 后版本 e1ae6b4b-b72e-4d03-9f59-a8f8ecbdc911。
+- 域名：https://api.arcinks.com/；workers.dev：https://oneapi.12213443th.workers.dev。两入口实际 /health 为200并返回正确service。
+- 域名 changeset：added1、updated0、conflicting0；三个 override 为false。新增 Custom Domain ID 0ba68b1a462fc2f0c9f4c9435cd3e4064a2d2ec9。原4个Worker、5个域名绑定清单仍在，zone Worker routes仍为空；未对其执行写操作。DNS读取权限仍不足，不宣称完成全DNS差异审计。
+- 真实 admin-only smoke 通过：管理员口令登录/会话、CSRF拒绝、创建临时允许gpt-5.5的key、普通key拒绝管理、清理key与退出测试会话。生成次数0。首次自定义域名请求出现一次连接错误，随后两个健康入口通过才重跑管理检查。
+- 受控迁移：只发一次官方模型目录验证，HTTP403 / upstream_http_403；导入未写入账号，未生成。随后删除 ACCOUNT_IMPORT_SECRET，secret list仅余三项长期Secret，导入端点404/account_import_disabled；本机忽略文件中的临时Secret也移除。云端保留原环境兼容key，临时key已删除。
+- 本地存储/账号未修改或主动刷新；旧进程不再监听时已重新启动相同Node运行器。后续只读本地状态检查曾被主机工具权限错误中断，不能把旧PID当作当前运行证据。
 
-## 恢复入口
+## 用户重新登录后的对照（2026-09-07）
 
-部署指令见 [DEPLOYMENT.md](../DEPLOYMENT.md)。迁移若无法通过官方验证，保留新 Worker，关闭临时导入 secret并等待用户；本地不撤销、不清空、不主动刷新复制令牌。不得以部署成功替代上游成功，不无限重试。
+用户在云端完成新的设备授权后截图显示 connected 和账号信息，额度请求仍403。主会话在 2026-09-07T03:34:52Z 回读 /admin/status：HTTP200、connected=true、reauthenticationRequired=false；随后仅一次 /admin/test/models 返回403/upstream_http_403，生成0次。
+
+这排除了“只要重新授权即可恢复当前两个资源接口”的猜测。connected证明网关保存了凭据，并不保证模型或额度授权可用。当前证据支持云端登录路径可用、模型目录/额度资源请求仍被上游拒绝；没有可确认业务错误码，不能把WAF、出口IP、TLS或某个请求头写成已证实根因。未在本轮导出新云端凭据到本地作同令牌对照。
+
+## 恢复入口与阻碍
+
+部署已完成、后台管理可用；纯Worker的模型与额度访问受403阻碍，不能宣称端到端可用。保留用户新云端登录，不重登、不反复重试、不返回伪造模型列表。Access仍未配置真实TeamDomain/AUD，默认关闭，管理员key可用。
+
+后续若有明确请求契约修复证据可做有限对照；需要改变架构或新增本地/外部转发服务时先确定新的范围。部署操作见 [DEPLOYMENT.md](../DEPLOYMENT.md)。已审查的临时导入默认关闭；不为排障重新开启凭据导出入口。

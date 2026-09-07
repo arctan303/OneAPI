@@ -1,6 +1,6 @@
 # Phase-02：Cloudflare Worker 部署与 Access 管理登录
 
-状态：实施完成；本地验证通过；部署前 R2 独立审查通过；云部署被宿主敏感出站审批阻止，等待用户明确授权。基线 `7ec814e`，2026-09-07。
+状态：实施完成；本地验证与部署前R2审查通过；oneapi/api.arcinks.com已部署；云端新登录成功，但模型目录与额度仍403，端到端验收受阻。代码基线 `4294b99`，2026-09-07。
 
 ## 目标与授权
 
@@ -32,4 +32,6 @@ Wrangler 已登录。现有 Worker 为 arcinks-com、blog、mail、music-arctan-
 
 ## 当前恢复检查点
 
-代码/部署文档与本地68项测试、浏览器、运行器、构建已通过；fresh reviewer通过，见 [验证](../verification/PHASE-02.md) / [审查](../verification/PHASE-02-review.md)。Secrets上传命令在执行前被自动审批拒绝，无云资源创建、无凭据上传。用户对指定Secrets和本地OAuth向oneapi/api.arcinks.com的上传授权问题仍待回答。获得后先核对云资源清单未变，复用已审代码证据，继续Secrets→Worker→无覆盖域名→有限迁移/验收；无法迁移按用户要求停等。
+前次自动审批要求的具体凭据授权已由用户“允许”补齐。Worker和指定域名已部署，管理员/key隔离真实检查通过；受控迁移被一次目录403拒绝后已关闭临时导入。用户随后在云端重新授权成功；2026-09-07T03:34:52Z确认connected=true、无需重登，但一次目录检查仍403。保留新登录，未发送生成，不继续重复登录。
+
+事实、版本、资源ID和限制见 [验证](../verification/PHASE-02.md)；[部署前审查](../verification/PHASE-02-review.md)结论仍适用，无新业务代码改动。当前阻碍是Worker资源请求上游403，根因未证实；Access真实SSO未验收。不能以管理后台上线替代上游可用。

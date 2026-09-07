@@ -4,11 +4,11 @@
 
 ## 本地扩展
 
-账号官方额度、管理员按 key 日志、模型权限、有效期/停用、限速/并发已接入本地。真实 SDK 两种协议、显式思考程度、官方七天额度和完整后台流程已通过，fresh R2 独立复核通过；当前结果见 [PHASE-01](verification/PHASE-01.md)。精简日志默认开启，完整正文按需启用。计划为[本地扩展](dev-plan/phase-01.md)后进行[隔离Cloudflare测试](dev-plan/phase-02.md)；后者已获授权但尚未执行，不影响已有资源。
+账号官方额度、管理员按 key 日志、模型权限、有效期/停用、限速/并发已接入本地。真实 SDK 两种协议、显式思考程度、官方七天额度和完整后台流程已通过，fresh R2 独立复核通过；当前结果见 [PHASE-01](verification/PHASE-01.md)。精简日志默认开启，完整正文按需启用。计划为[本地扩展](dev-plan/phase-01.md)后进行[隔离Cloudflare测试](dev-plan/phase-02.md)；后者已部署并验证管理功能，但云端重新授权后模型/额度仍403。
 
 ## 当前状态
 
-[LIVE-001](tasks/LIVE-001.md) 已完成本地真实验收：管理员登录和原账户恢复正常，读取 6 个真实模型，新建 API key 经 OpenAI SDK 调用 gpt-5.5 得到 LIVE_OK，后台浏览器流式测试得到 UI_OK。R2 独立复核通过。原 Wrangler 本地方式仍遇到目录 403；当前真实可用入口为用户已接受的 Node 本地方式。未部署 Cloudflare。
+[LIVE-001](tasks/LIVE-001.md) 已完成本地真实验收：管理员登录和原账户恢复正常，读取 6 个真实模型，新建 API key 经 OpenAI SDK 调用 gpt-5.5 得到 LIVE_OK，后台浏览器流式测试得到 UI_OK。R2 独立复核通过。原 Wrangler 本地方式仍遇到目录 403；当前真实可用入口为用户已接受的 Node 本地方式。Cloudflare 已部署，当前上游调用仍受403阻碍。
 
 管理员登录、7 天会话、后台直接测试、命名 API key 创建/撤销已经由 [AUTH-001](tasks/AUTH-001.md) 实现。账号原有设备码授权和本项目存储继续使用，没有重置数据库或读取其他应用登录文件。
 
@@ -48,8 +48,8 @@
 
 ## 尚未证明
 
-Cloudflare 云端出口和部署、自然 token 刷新、全部目录模型逐一生成，以及函数工具的真实上游行为仍待单独验收。Chat 文本流式已有 Phase-01 真实证据；当前未识别到通用 5h 额度窗口，额外模型额度单独显示。真实目录可选不等于每个模型均已测试。
+Cloudflare 云端成功调用、自然 token 刷新、全部目录模型逐一生成，以及函数工具的真实上游行为仍待单独验收。Chat 文本流式已有 Phase-01 真实证据；当前未识别到通用 5h 额度窗口，额外模型额度单独显示。真实目录可选不等于每个模型均已测试。
 
 环境：C:\git\OneAPI，Windows PowerShell，Node 24.15.0，npm 11.12.1；已初始化 Git，第一版归档目标为 arctan303/OneAPI，版本 v0.1.0；见 [归档记录](verification/ARCHIVE-001.md)。开发子代理按用户分工使用 gpt-5.6-sol/high，简单任务可用 gpt-5.6-luna；这不改变网关调用模型。
 
-Worker 部署与 Access 配置见 [部署说明](DEPLOYMENT.md)。Phase-02 代码、本地验证及部署前独立审查已完成；云端上传等待宿主要求的明确凭据授权，尚未创建 Worker。
+Worker 部署与 Access 配置见 [部署说明](DEPLOYMENT.md)。Phase-02 已部署至 https://api.arcinks.com/，后台管理通过；云端重新登录后模型目录与额度仍返回403，纯Worker调用尚未跑通，见阶段验证记录。

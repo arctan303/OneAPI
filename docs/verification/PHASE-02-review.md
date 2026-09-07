@@ -27,3 +27,7 @@ Reviewer 独立执行 `node scripts/verify-worker-smoke-cleanup.mjs`，6场景�
 尝试执行已审查的 `node scripts/upload-worker-secrets.mjs --enable-import` 时，宿主自动审批在创建进程前拒绝：认为既有部署/迁移授权未明确覆盖具体Secrets向Cloudflare目标的敏感出站。未执行上传，未创建Worker、DO或域名绑定。已向用户列明ADMIN_API_KEY、新GATEWAY_API_KEY、TOKEN_ENCRYPTION_KEY、临时ACCOUNT_IMPORT_SECRET及账号凭据迁移目标请求明确授权，等待回复；不是审查未通过，也不是上游403。
 
 本地服务已加载新代码并回读：health200、connected=true、reauthenticationRequired=false、keyCount1、Access默认关闭。代码未在审查通过后作实质修改。
+
+## 后续状态更正（2026-09-07）
+
+前述自动审批暂停已由用户明确“允许”解除，随后按已审基线完成部署、无覆盖域名绑定和管理端验证；迁移403后关闭临时Secret。用户云端新授权后仍目录/额度403。前文保留当时审查经过，当前状态以 [PHASE-02](PHASE-02.md) 为准，不将部署前gate扩大为云端调用通过。
