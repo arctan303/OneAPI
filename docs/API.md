@@ -104,3 +104,23 @@ modelAccess 为 `{"mode":"all","models":[]}` 或 `{"mode":"allowlist","models":[
 - `POST /admin/account/import`：仅部署时临时启用；HTTPS、管理员 Bearer 及 X-OneAPI-Import-Secret 同时有效；最大 32 KiB，body 严格为 idToken/accessToken/refreshToken。目标账号必须为空，固定官方目录验证成功才加密保存；成功 204，关闭后 404，已有账号 409。没有导出接口。
 
 普通 API key 不能调用上述管理接口。Access 只用于管理，不代替 /v1/* 调用 key；部署和门禁恢复见 [部署说明](DEPLOYMENT.md)。
+
+## 上游拒绝诊断（WORKER-403）
+
+已鉴权管理员的失败响应可附加 `error.diagnostic`，额度不可用响应同样可附加该字段。内容仅为上游目标、HTTP状态、Content-Type、错误分类、有限CF/请求标识、白名单HTML标题、正文读取长度及SHA-256；若正文截断，长度/hash只代表已读取前缀。原始HTML、请求/响应完整头及OAuth凭据永不包含。普通 `/v1/*` 调用key及未鉴权管理请求不返回该诊断。该字段只提供定位证据，不将HTML403解释为账户过期。
+
+诊断还可包含白名单contentEncoding、bodyFormat分类和固定bodyMarker，不包含原始字节或页面文本。
+
+## 管理员临时出站对照（EGRESS-001）
+
+POST /admin/diagnostics/egress，JSON仅接受operation为ping、models、usage或generate，沿用现有管理员鉴权与CSRF；普通调用key不可访问。缺少ONEAPI_RELAY_ORIGIN或ONEAPI_RELAY_KEY时503 egress_diagnostic_disabled。该配置不改变/v1或原后台测试路径。
+
+ping只验证加密中转身份；models/usage各用同一枚云端access token顺序发直连和Node中转各一次；generate只中转一次固定gpt-5.5短请求，默认思考，无重试或令牌刷新。返回direct/relay状态和脱敏摘要、sameCredential，不返回凭据/原始正文。临时链路缓冲响应，不作为实时SSE能力证明。测试完成关闭配置，详见[EGRESS-001](tasks/EGRESS-001.md)。
+
+## 临时 WebSocket 握手诊断
+
+`POST /admin/diagnostics/websocket` 沿用管理员权限和同源保护，普通 API key 不可访问。默认返回 503 / `websocket_diagnostic_disabled`；只有服务端 `ONEAPI_WS_DIAGNOSTIC` 严格为字符串 `true` 才启用。请求必须为无 query 的空 JSON 对象 `{}`，不接受 URL、模型或生成输入。
+
+启用后固定向官方 Codex Responses 目标执行一次 WebSocket 握手。不会刷新或迁移账号，不发送生成消息，连接等待最多 5 秒，升级后观察最多 300ms 再关闭。仅返回 HTTP 状态、升级结果、有限事件布尔值和关闭码，以及非 101 的脱敏诊断；不会返回消息正文、关闭原因、账户凭据或选定模型名称。
+
+`101` 且 `upgraded: true` 仅证明连接升级成功，不代表生成或额度可用；事件布尔值记录观察窗口内的事实。该临时诊断不会让 `/v1/responses` 或 `/v1/chat/completions` 自动改走 WebSocket。验证结果见 [WS-001](tasks/WS-001.md)。

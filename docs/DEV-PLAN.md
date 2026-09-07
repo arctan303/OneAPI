@@ -1,12 +1,14 @@
-# DEMO-001：本地 Codex 订阅网关开发交接
+# OneAPI 开发计划与历史交接
 
 初始日期：2026-09-06；当前状态更新：2026-09-07。原路线：0→1；规模：单一可交付的本地 Demo 短任务，以下为内部执行顺序，不另建 Phase。
 
 ## 活跃计划
 
-当前交付顺序：[Phase-01](dev-plan/phase-01.md) → [Phase-02](dev-plan/phase-02.md)。Phase-01 本地实现、真实两协议/思考程度/官方额度与页面验收、fresh R2 独立复核均已完成；Phase-02已部署且管理端真实验证通过；用户新云端登录后模型目录/额度仍403，端到端验收受阻，见阶段文档。本轮用户已允许后续隔离Cloudflare测试，但不得影响已有资源；替代下文历史阶段仅本地的授权限制。范围与默认值见 [EXPLORE-001](tasks/EXPLORE-001.md)。
+最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。当前本地8787运行，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
 
-## 先读与当前状态
+历史交付顺序：[Phase-01](dev-plan/phase-01.md) → [Phase-02](dev-plan/phase-02.md)。Phase-01 本地实现、真实两协议/思考程度/官方额度与页面验收、fresh R2 独立复核均已完成；Phase-02已部署且管理端真实验证通过；用户新云端登录后模型目录/额度仍403，端到端验收受阻，见阶段文档。本轮用户已允许后续隔离Cloudflare测试，但不得影响已有资源；替代下文历史阶段仅本地的授权限制。范围与默认值见 [EXPLORE-001](tasks/EXPLORE-001.md)。
+
+## 历史：DEMO-001 与 Phase-01/02 交接状态
 
 有效契约：[Product-Spec.md](Product-Spec.md)；环境与用户分工：[README.md](README.md)；执行约定：[AGENTS.md](../AGENTS.md)。
 
@@ -24,7 +26,7 @@ R2 的具体理由：新增上游账户凭据存储、刷新和管理接口 → 
 
 后续由主会话统筹，开发子代理采用 `gpt-5.6-sol` + `high`；简单任务可用 `gpt-5.6-luna`，思考程度按任务选择（DEC-006）。已按用户新要求完成 [AUTH-001](tasks/AUTH-001.md) 单管理员登录与 API 密钥管理；403 旧诊断检查点保留；用户 2026-09-07 已授权 [LIVE-001](tasks/LIVE-001.md) 真实链路排查，并接受本机 Node 先可用（DEC-009），替代旧任务不发新上游请求的限制。此前“暂不扩展接口”仅针对无依据的上游排障，不能阻止用户已明确授权的后台交互改进。诊断证据见 [403 运行时诊断](verification/403-runtime-diagnosis.md)。
 
-## 1. 架构选择
+## 1. 历史架构选择（当前已由 Phase-03 替代）
 
 使用 TypeScript + Wrangler 本地 Workers 运行时 + SQLite-backed Durable Object。路由库可选轻量 Hono 或原生 Fetch Router；锁定实际安装版本并提交锁文件。前端采用静态 HTML/CSS/TypeScript，避免为三步登录测试页面引入完整管理框架。
 
@@ -189,3 +191,5 @@ fresh reviewer 接收有效契约、实际新增文件清单/哈希或 git diff�
 - [SQLite DO 存储](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)：持久化边界。
 
 以上平台资料为实施依据，开发时核对当前版本；仓库宣传、搜索摘要和代码注释不等于本项目的实测证据。
+
+Phase-02同凭据诊断：[EGRESS-001](tasks/EGRESS-001.md)已完成，Node路径真实可用；临时链路已关闭，不替代纯Worker或生产API验收。

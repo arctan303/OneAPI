@@ -107,6 +107,26 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
       windows: { fiveHour: null, sevenDay: null }
     });
 
+    configureMockUpstream({ usage: "challenge" });
+    const rejectedUsage = await (await SELF.fetch(`${origin}/admin/usage?refresh=true`, { headers: auth(admin) })).json() as any;
+    expect(rejectedUsage.error).toMatchObject({
+      code: "upstream_http_403",
+      diagnostic: {
+        upstreamHostname: "chatgpt.com",
+        upstreamPath: "/backend-api/wham/usage",
+        status: 403,
+        server: "cloudflare",
+        cfRay: "usage-mockray-SIN",
+        cfErrorCode: "1020",
+        bodyMarker: "cloudflare_blocked",
+        errorCategory: "cloudflare_attention_required",
+        bodyBytes: expect.any(Number),
+        bodySha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        bodyFormat: "html_text"
+      }
+    });
+    expect(JSON.stringify(rejectedUsage)).not.toContain("SECRET_USAGE_BODY");
+
     await SELF.fetch(`${origin}/admin/disconnect`, { method: "POST", headers: auth(admin), body: "{}" });
     const disconnected = await (await SELF.fetch(`${origin}/admin/usage`, { headers: auth(admin) })).json() as any;
     expect(disconnected).toMatchObject({ available: false, lastSuccessAt: null, windows: { fiveHour: null, sevenDay: null } });

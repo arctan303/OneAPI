@@ -1,4 +1,4 @@
-import { GatewayError, upstreamError } from "../errors";
+import { GatewayError, upstreamError, type UpstreamDiagnostic } from "../errors";
 import type { StoredCredentials } from "../types";
 import type { OutboundFetch } from "./auth";
 import { CLIENT_VERSION, CODEX_BASE_URL, CODEX_ORIGINATOR, CODEX_USER_AGENT } from "./constants";
@@ -22,13 +22,21 @@ function safeHeaderText(value: string | null): string {
   return (value ?? "").replace(/[^\x20-\x7E]/g, "?").slice(0, 100);
 }
 
+function safeContentEncoding(value: string | null): UpstreamDiagnostic["contentEncoding"] | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "gzip" || normalized === "br" || normalized === "deflate" || normalized === "zstd" || normalized === "identity"
+    ? normalized
+    : undefined;
+}
+
 interface BoundedText {
   text: string;
+  bytes: Uint8Array;
   truncated: boolean;
 }
 
 async function readBoundedText(response: Response): Promise<BoundedText> {
-  if (!response.body) return { text: "", truncated: false };
+  if (!response.body) return { text: "", bytes: new Uint8Array(), truncated: false };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -53,7 +61,7 @@ async function readBoundedText(response: Response): Promise<BoundedText> {
     }
   } catch {
     await reader.cancel("upstream error body read failed").catch(() => undefined);
-    return { text: "", truncated: true };
+    return { text: "", bytes: new Uint8Array(), truncated: true };
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -61,7 +69,30 @@ async function readBoundedText(response: Response): Promise<BoundedText> {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return { text: new TextDecoder("utf-8").decode(bytes), truncated };
+  return { text: new TextDecoder("utf-8").decode(bytes), bytes, truncated };
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", copy.buffer));
+  return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function diagnosticBodyFormat(bytes: Uint8Array, text: string): UpstreamDiagnostic["bodyFormat"] {
+  if (bytes.byteLength === 0) return "empty";
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) return "gzip_magic";
+  if (bytes[0] === 0x28 && bytes[1] === 0xb5 && bytes[2] === 0x2f && bytes[3] === 0xfd) return "zstd_magic";
+  const normalized = text.replace(/^\uFEFF?\s*/, "").toLowerCase();
+  if (normalized.startsWith("<!doctype html") || normalized.startsWith("<html") || normalized.slice(0, 512).includes("<html")) {
+    return "html_text";
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return /^[\x09\x0A\x0D\x20-\x7E\u0080-\uFFFF]*$/.test(text) ? "text" : "binary";
+  } catch {
+    return "binary";
+  }
 }
 
 export async function readBoundedErrorCode(response: Response): Promise<string> {
@@ -108,36 +139,36 @@ function htmlErrorCategory(title: string, server: string, cfRay: string, cfMitig
   return hasCloudflareSignal ? "cloudflare_html_error" : "unclassified_html_error";
 }
 
-export interface UpstreamDiagnostic {
-  event: "codex_upstream_rejected";
-  upstreamHostname: string;
-  upstreamPath: string;
-  status: number;
-  contentType: string;
-  server?: string;
-  cfRay?: string;
-  cfMitigated?: string;
-  upstreamRequestId?: string;
-  htmlTitle?: string;
-  errorCategory: string;
-  bodyTruncated?: true;
+function strictCloudflareErrorCode(body: string, contentType: string, hasCloudflareSignal: boolean): string {
+  if (!hasCloudflareSignal) return "";
+  const normalizedContentType = contentType.toLowerCase();
+  const html = normalizedContentType.includes("html");
+  if (!html && !normalizedContentType.includes("text/plain")) return "";
+  const match = html
+    ? body.match(/<(?:span|div)\b[^>]*\bclass=["'][^"']*\bcf-error-code\b[^"']*["'][^>]*>\s*(?:error(?:\s+code)?\s*:?\s*)?([1-9][0-9]{3})\s*<\/(?:span|div)>/i)
+    : body.match(/(?:^|\s)error\s+code\s*:\s*([1-9][0-9]{3})(?=\s|$)/i);
+  if (!match) return "";
+  const value = Number.parseInt(match[1]!, 10);
+  return value >= 1000 && value <= 1999 ? String(value) : "";
 }
 
 export async function collectUpstreamDiagnostic(response: Response, targetUrl: string): Promise<UpstreamDiagnostic> {
   const target = new URL(targetUrl);
   const contentType = safeHeaderText(response.headers.get("content-type"));
+  const contentEncoding = safeContentEncoding(response.headers.get("content-encoding"));
   const server = safeHeaderText(response.headers.get("server"));
   const cfRay = safeDiagnosticToken(response.headers.get("cf-ray"));
   const cfMitigated = safeDiagnosticToken(response.headers.get("cf-mitigated"));
   const upstreamRequestId = safeDiagnosticToken(
     response.headers.get("x-request-id") ?? response.headers.get("openai-request-id") ?? response.headers.get("cf-request-id")
   );
+  const body = await readBoundedText(response);
+  const bodySha256 = await sha256Hex(body.bytes);
+  const bodyFormat = diagnosticBodyFormat(body.bytes, body.text);
+  const hasCloudflareSignal = server.toLowerCase().includes("cloudflare") || Boolean(cfRay) || Boolean(cfMitigated);
   let htmlTitle = "";
   let errorCategory = "unclassified_http_error";
-  let bodyTruncated = false;
   if (contentType.toLowerCase().includes("json")) {
-    const body = await readBoundedText(response);
-    bodyTruncated = body.truncated;
     if (!body.truncated) {
       try {
         const value = JSON.parse(body.text) as { error?: unknown };
@@ -150,26 +181,33 @@ export async function collectUpstreamDiagnostic(response: Response, targetUrl: s
     }
     if (errorCategory !== "structured_json_error") errorCategory = "unclassified_json_error";
   } else if (contentType.toLowerCase().includes("html")) {
-    const body = await readBoundedText(response);
-    bodyTruncated = body.truncated;
     htmlTitle = redactedHtmlTitle(body.text);
     errorCategory = htmlErrorCategory(htmlTitle, server, cfRay, cfMitigated);
-  } else {
-    await response.body?.cancel("non-JSON upstream error body is not retained").catch(() => undefined);
   }
+  const cfErrorCode = body.truncated ? "" : strictCloudflareErrorCode(body.text, contentType, hasCloudflareSignal);
+  if (cfErrorCode && !contentType.toLowerCase().includes("html")) errorCategory = "cloudflare_error_code";
+  const bodyMarker = hasCloudflareSignal && !body.truncated && /\bsorry, you have been blocked\b/i.test(body.text)
+    ? "cloudflare_blocked" as const
+    : undefined;
   return {
     event: "codex_upstream_rejected",
     upstreamHostname: target.hostname,
     upstreamPath: target.pathname,
     status: response.status,
     contentType,
+    ...(contentEncoding ? { contentEncoding } : {}),
+    bodyBytes: body.bytes.byteLength,
+    bodySha256,
+    bodyFormat,
+    ...(bodyMarker ? { bodyMarker } : {}),
     ...(server ? { server } : {}),
     ...(cfRay ? { cfRay } : {}),
     ...(cfMitigated ? { cfMitigated } : {}),
+    ...(cfErrorCode ? { cfErrorCode } : {}),
     ...(upstreamRequestId ? { upstreamRequestId } : {}),
     ...(htmlTitle ? { htmlTitle } : {}),
     errorCategory,
-    ...(bodyTruncated ? { bodyTruncated: true as const } : {})
+    ...(body.truncated ? { bodyTruncated: true as const } : {})
   };
 }
 
@@ -180,12 +218,13 @@ async function throwUpstreamFailure(response: Response, targetUrl: string, fallb
     throw new GatewayError(
       403,
       "upstream_edge_challenge",
-      "Codex 上游的 Cloudflare 校验拒绝了当前本地运行时请求。",
+      "Codex 上游的 Cloudflare 校验拒绝了当前运行环境的请求。",
       undefined,
-      "server_error"
+      "server_error",
+      diagnostic
     );
   }
-  throw upstreamError(response.status, fallback);
+  throw upstreamError(response.status, fallback, diagnostic);
 }
 
 export function generationAbortError(signal: AbortSignal): GatewayError {
@@ -199,7 +238,7 @@ export function generationAbortError(signal: AbortSignal): GatewayError {
   return new GatewayError(499, "request_cancelled", "生成请求已取消。", undefined, "request_error");
 }
 
-function headers(credentials: StoredCredentials, accept: string): Headers {
+export function codexHeaders(credentials: StoredCredentials, accept: string): Headers {
   return new Headers({
     Authorization: `Bearer ${credentials.accessToken}`,
     "ChatGPT-Account-ID": credentials.accountId,
@@ -211,13 +250,39 @@ function headers(credentials: StoredCredentials, accept: string): Headers {
   });
 }
 
+export function createUsageRequest(credentials: StoredCredentials): Request {
+  return new Request("https://chatgpt.com/backend-api/wham/usage", {
+    method: "GET",
+    headers: codexHeaders(credentials, "application/json"),
+    redirect: "manual"
+  });
+}
+
+export function createModelsRequest(credentials: StoredCredentials): Request {
+  return new Request(`${CODEX_BASE_URL}/models?client_version=${encodeURIComponent(CLIENT_VERSION)}`, {
+    method: "GET",
+    headers: codexHeaders(credentials, "application/json"),
+    redirect: "manual"
+  });
+}
+
+export function createResponseRequest(
+  credentials: StoredCredentials,
+  body: Record<string, unknown>,
+  signal?: AbortSignal
+): Request {
+  return new Request(`${CODEX_BASE_URL}/responses`, {
+    method: "POST",
+    headers: codexHeaders(credentials, "text/event-stream"),
+    body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
+    redirect: "manual"
+  });
+}
+
 export async function fetchUsage(fetcher: OutboundFetch, credentials: StoredCredentials): Promise<Response> {
   const targetUrl = "https://chatgpt.com/backend-api/wham/usage";
-  const response = await fetcher(new Request(targetUrl, {
-    method: "GET",
-    headers: headers(credentials, "application/json"),
-    redirect: "manual"
-  }));
+  const response = await fetcher(createUsageRequest(credentials));
   await rejectRedirect(response, "额度请求");
   if (!response.ok) await throwUpstreamFailure(response, targetUrl, "额度请求失败");
   return response;
@@ -225,11 +290,7 @@ export async function fetchUsage(fetcher: OutboundFetch, credentials: StoredCred
 
 export async function fetchModels(fetcher: OutboundFetch, credentials: StoredCredentials): Promise<Response> {
   const targetUrl = `${CODEX_BASE_URL}/models?client_version=${encodeURIComponent(CLIENT_VERSION)}`;
-  const response = await fetcher(new Request(targetUrl, {
-    method: "GET",
-    headers: headers(credentials, "application/json"),
-    redirect: "manual"
-  }));
+  const response = await fetcher(createModelsRequest(credentials));
   await rejectRedirect(response, "模型列表请求");
   if (!response.ok) await throwUpstreamFailure(response, targetUrl, "模型目录请求失败");
   return response;
@@ -244,13 +305,7 @@ export async function fetchResponseStream(
   const targetUrl = `${CODEX_BASE_URL}/responses`;
   let response: Response;
   try {
-    response = await fetcher(new Request(targetUrl, {
-      method: "POST",
-      headers: headers(credentials, "text/event-stream"),
-      body: JSON.stringify(body),
-      signal,
-      redirect: "manual"
-    }));
+    response = await fetcher(createResponseRequest(credentials, body, signal));
   } catch {
     if (signal.aborted) throw generationAbortError(signal);
     throw new GatewayError(502, "upstream_network_error", "无法连接 Codex 生成服务。", undefined, "server_error");

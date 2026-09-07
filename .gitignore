@@ -21,3 +21,6 @@ output/
 .dev.vars.*
 !.dev.vars.example
 !.dev.vars.test
+
+# Native single-server persistent state
+/data/

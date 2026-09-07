@@ -1,0 +1,15 @@
+api.example.com {
+  reverse_proxy 127.0.0.1:8787 {
+    # Preserve the public HTTPS host seen by the application.
+    header_up Host {host}
+
+    # Do not accept client-supplied forwarding metadata.
+    header_up -X-Forwarded-For
+    header_up -X-Forwarded-Host
+    header_up -X-Forwarded-Proto
+    header_up X-Forwarded-Proto https
+
+    # Flush streamed responses immediately.
+    flush_interval -1
+  }
+}

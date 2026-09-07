@@ -1,16 +1,16 @@
-# Product Spec：个人 Codex 网关 Demo
+# Product Spec：OneAPI 轻量个人 Codex 网关
 
 版本：本地扩展（v0.1.0 之后）；日期：2026-09-07。原版 LIVE-001 已通过；Phase-01 本地扩展已完成，真实两协议/显式思考程度/官方额度/后台操作通过，fresh R2 独立复核通过。证据见 PHASE-01；Phase-02已部署oneapi/api.arcinks.com，管理端可用；云端重新授权后模型目录/额度仍403，端到端验收受阻。
 
 ## 目标与有效决定
 
-目标用户只有账户所有者。用户通过官方页面授权自己的 Codex 账户，然后在本地 Demo 和自己的网站中使用 OpenAI 风格 HTTP 接口；长期目标为 Cloudflare Workers，无常驻服务器和 Docker 依赖；DEC-009 允许先用本机 Node.js 提供可用的本地版本，云端目标另验收。
+目标用户只有账户所有者。通过官方页面授权自己的Codex账户，在自己的网站或工具中使用OpenAI风格HTTP接口。当前主方向为轻量单服务器部署：一个Node.js进程和SQLite持久化，Docker可选，生产不依赖Worker/Wrangler/Miniflare；Cloudflare Access管理登录和管理员口令兜底继续保留。DEC-014替代原单Worker最终目标；Worker参考项目核查保留为独立研究，现有实验部署不删除。
 
 | ID | 当前有效决定 | 来源与状态 |
 | --- | --- | --- |
 | DEC-001 | 单账户自用，使用 Codex 订阅登录，不以 Platform API Key 替代 | 用户明确要求，有效 |
 | DEC-002 | 先本地 Demo，需要官方登录操作时通知用户 | 用户明确要求，有效 |
-| DEC-003 | 最终目标为 Workers | 云端测试授权由 DEC-010 更新，历史未部署事实保留 |
+| DEC-003 | 原最终目标为Workers | 被DEC-014替代；Phase-02及诊断历史保留 |
 | DEC-004 | 当前助手编写方案，由用户指定其他模型实施 | 已替代；被 DEC-005 替代 |
 | DEC-005 | 原开发执行模型直接实施 DEMO-001，先完成 Mock、SDK 验证和独立审查，再启动本地 Demo | 实施阶段已执行；后续角色分工被 DEC-006 替代，既有验证证据保留 |
 | DEC-006 | 原开发任务交接后，主会话负责方案、任务拆分和结果核验；开发子代理默认 `gpt-5.6-sol`、`high`；简单任务可用 `gpt-5.6-luna`，思考程度按任务选择 | 用户 2026-09-06 明确要求，有效；不是更换网关上游测试模型的授权 |
@@ -21,8 +21,9 @@
 | DEC-013 | 后台两参数启用 Access、管理员 key 兜底；直接部署 oneapi 到 api.arcinks.com，允许安全复用 Demo 自身账号，人工授权无法避免时停下等待 | 用户 2026-09-07 明确授权；替代 Phase-02 原默认不迁移/不绑定域名限制，不允许覆盖其他资源 |
 | DEC-012 | 补齐每次请求的思考程度、官方目录可用档位/默认值与后台选择框；以当前账号实际能力为准 | 用户 2026-09-07 追加，纳入 Phase-01 / REQ-12；不改变每 key 模型权限 |
 | DEC-009 | 接受先用本机 Node.js 跑通同一套后台与 API，再单独解决 Cloudflare 部署；真实模型测试优先 gpt-5.5，gpt-5.6-luna 以账户目录为准 | 用户 2026-09-07 明确确认；LIVE-001 实施与本地真实验证完成，替代本地运行也必须仅使用 Worker 出站的限制，不改变 DEC-003 云端目标 |
+| DEC-014 | 产品主交付转为轻量单服务器；继续寻找有真实证据的纯Worker项目；保留CF Access登录与管理员兜底 | 用户2026-09-07当前明确要求，有效；SERVER-001 / Phase-03本地交付完成，替代DEC-003及DEC-009继续以Worker为最终交付的限制 |
 
-以下为方案负责人的实施默认值，不冒充用户逐项决定：TypeScript、Wrangler 本地运行时、SQLite-backed Durable Object、原生 HTML/CSS 小页面、两类 OpenAI 风格生成接口、默认 2 个并发生成。开发模型可调整内部组织，但不能静默扩大产品范围或削弱鉴权。
+当前实施默认值：TypeScript、Node.js 24原生运行与SQLite、原生HTML/CSS小页面、两类OpenAI风格生成接口，保留默认2并发。Wrangler/SQLite-backed DO是旧版与Worker实验运行方式，不能继续当作新生产依赖；具体架构验证见Phase-03，不把默认值冒充用户逐项决定。
 
 ## 首版范围与非目标
 
@@ -89,7 +90,7 @@ DEC-007/008 替代页面反复填写管理员/调用密钥的交互。仅一个�
 
 非流式 Responses 返回完整 Response 对象；Chat Completions 返回 `choices[].message` 与明确的 `finish_reason`。工具参数保持 JSON 字符串，不以字符串拼接伪造对象；usage 有上游依据才返回，不能把未知写成真实零消耗。
 
-错误响应使用 `{error:{message,type,code,param?}}`。网关鉴权失败为 401；尚未连接账户为 503；输入不支持为 400；本地并发超限或上游限流为 429（不同 code）；未经结构化上游错误确认的 HTTP 403 保持 403，但使用本地 `upstream_http_403` / `server_error`，不能冒充账户业务权限错误；只有明确的 `cf-mitigated: challenge` 信号使用 `upstream_edge_challenge`，HTML 标题本身不能证明 challenge；上游协议/网络故障为 502；超时为 504。上游账户失效用明确 `account_reauthentication_required` 错误，不能混淆为调用者密钥错误。
+错误响应使用 `{error:{message,type,code,param?}}`。WORKER-403 为已鉴权管理员附加可选 error.diagnostic 白名单元数据，普通调用key/未鉴权请求不返回；不含原始正文或凭据。网关鉴权失败为 401；尚未连接账户为 503；输入不支持为 400；本地并发超限或上游限流为 429（不同 code）；未经结构化上游错误确认的 HTTP 403 保持 403，但使用本地 `upstream_http_403` / `server_error`，不能冒充账户业务权限错误；只有明确的 `cf-mitigated: challenge` 信号使用 `upstream_edge_challenge`，HTML 标题本身不能证明 challenge；上游协议/网络故障为 502；超时为 504。上游账户失效用明确 `account_reauthentication_required` 错误，不能混淆为调用者密钥错误。
 
 SSE 已开始后无法修改 HTTP 状态；必须通过错误事件/连接失败报告异常，不能发送正常完成标记来掩盖失败。Chat 流仅成功时以 `[DONE]` 正常结束；Responses 遵循其事件格式。
 
@@ -97,7 +98,7 @@ SSE 已开始后无法修改 HTTP 状态；必须通过错误事件/连接失败
 
 - 上游 access/refresh token、设备授权内部 ID 和 PKCE verifier 属于服务端机密。前端只得到用户需要的短期代码、官方网址与脱敏状态。
 - 管理员密钥、调用密钥、凭据加密密钥彼此独立；不得硬编码，缺少必要密钥时默认拒绝操作。
-- 上游令牌加密后存入 DO storage，加密密钥来自本地忽略文件/云端 Secret。不得把密钥同明文 token 一起写入业务数据库或日志。
+- 上游令牌加密后存入所选运行时持久化存储（新服务器SQLite、旧Worker的DO storage），加密密钥来自进程环境/忽略配置文件/云端Secret。不得把密钥同明文 token 一起写入业务数据库或日志。
 - 本地 `.dev.vars`、`.wrangler/`、本地日志和测试私密输出必须在 Git 忽略规则内。加密不防拥有本机同等权限的用户，不能宣称超出威胁模型的保护。
 - 按 DEC-011 默认只保留精简日志：请求ID、key ID、路径、模型、耗时、状态和上游提供的用量；管理员可开启完整请求/响应正文的有界持久化。v0.1.0不记录正文的事实不变。正文只供管理员查看，采用保留期限与大小限制，取消/超限/缺失明确标记；不保存认证头、Cookie或OAuth秘密。上游拒绝诊断可以记录实际 hostname/path、状态、Content-Type、Server、Cloudflare 标记和请求 ID；HTML 最多有界读取 64 KiB，只保留规范化标题和明确错误类别。异常日志不得包含完整上游响应、Cookie、Authorization、token 或账户标识。
 - 浏览器不内置长效口令/API key；管理员口令验证后清除输入，使用 HttpOnly 会话 Cookie，不写 localStorage。新 API key 仅创建当次显示供复制，服务端只保存哈希与元数据；会话支持到期与服务端撤销，跨站请求严格拒绝。未来线上管理使用 Cloudflare Access；CORS 不等于身份认证。
@@ -110,7 +111,7 @@ SSE 已开始后无法修改 HTTP 状态；必须通过错误事件/连接失败
 
 AI 适用性：产品本身就是模型请求桥接，不增加“AI 路由判断”或自动改写用户提示词。模型选择由调用方给出，网关不隐式替换。
 
-Cloudflare 云端出口、Secret 配置、费用与真实部署是后续单独验收；不能由本地测试推断。授权已由 DEC-010 扩展为本地完成后的独立云端测试；不得修改已有资源。本轮实施并验收本地扩展，尚未部署云端。
+Cloudflare oneapi已隔离部署并完成管理验证，纯Worker上游仍403；REQ-15同云端凭据经Node目录/额度/生成已通过，不能替代纯Worker或生产中转验收。不得修改其他已有资源。
 
 ## 当前实现证据
 
@@ -122,8 +123,23 @@ Cloudflare 云端出口、Secret 配置、费用与真实部署是后续单独�
 
 首版已归档为 v0.1.0（54631e0），标签保持不变。Phase-01 后续扩展见 [接口说明](API.md) 和 [验证记录](verification/PHASE-01.md)。已确认扩展、实施默认值和有限验证边界见 [EXPLORE-001](tasks/EXPLORE-001.md)。日志仅管理员查看、精简默认、正文可选；协议范围为Chat Completions与Responses；先本地完成，再按DEC-010隔离云端测试。
 
-## Phase-02 / REQ-13、REQ-14（实现完成，真实云验收待执行）
+## Phase-02 / REQ-13、REQ-14（已部署，纯Worker上游验收受阻）
 
 REQ-13 / AC-13：后台配置 Access 两参数与开关；合法 JWT 进入管理员，伪造/过期/错误 audience/issuer 被拒绝，跨站写拒绝；关闭/换配置立即使旧 Access 凭证失效；管理员 key 保留；普通 API key 无管理权。CF 门禁仅管理路径，API 调用不跳登录。
 
 REQ-14 / AC-14：部署到新 oneapi Worker 并绑定 api.arcinks.com；域名冲突拒绝覆盖。仅迁移本地 Demo OAuth 到新空账号，通过 HTTPS 双重管理员/临时导入凭证，加密保存且不打印 token；完成关闭导入。保留本地状态。真实模型、额度、两协议、思考程度需 Worker 证据；如无法迁移则等待用户。部署和回滚文档可复现。
+
+## REQ-15 / AC-15：临时出站对照（EGRESS-001）
+
+用户授权Worker→本机Node诊断，替代WORKER-403中外部Node组件尚未授权的限制，仅限本次临时实验。管理员专用接口、相同云端access token、固定上游、应用层加密及重放拒绝；不改普通API路径或账户存储，不发送refresh token；验证后关闭。详细范围与验收见[tasks/EGRESS-001.md](tasks/EGRESS-001.md)。该实验已完成，目录/额度同凭据直连403、中转200，gpt-5.5生成成功；临时链路已关闭。该实验不是生产中转或纯Worker修复。
+
+
+## REQ-16 / AC-16：临时 WebSocket 握手诊断（WS-001）
+
+在用户授权继续纯Worker排障的范围内，新增默认关闭、仅管理员可用的固定上游握手探测；不发模型请求帧，不刷新或导出账号，不修改普通API。成功只表示观察到101及短暂连接状态，不代表生成或模型目录已可用。实验后关闭开关；无需数据迁移。具体输入、限时、凭据保护与验收见 [WS-001](tasks/WS-001.md)。实现与独立复核完成；一次真实握手返回 403、未发送生成帧，诊断开关已关闭，证据见 verification/WS-001.md。
+
+## SERVER-001 / REQ-17、AC-17：轻量单服务器（本地交付及真实验收完成）
+
+用户2026-09-07批准将产品定位由单Worker改为轻量单服务器，Cloudflare Access登录能力保留。正常生产进程不加载Miniflare/workerd/Wrangler；一个SQLite数据文件承载账号加密状态、key/session/设置与日志，直接Node启动，不要求Docker或外部数据库。现有/v1与管理员功能兼容，明确HOST/PORT/PUBLIC_ORIGIN配置、保留Host/Origin/CSRF与JWT真实验证。
+
+验收、迁移和回滚见[Phase-03](dev-plan/phase-03.md)：新运行时隔离行为验证、旧数据迁移到新空库且源不变、重启与事务/取消/并发、Access配置和兜底、最短真实两协议验证、可构建可启动产物和单机部署说明。迁移前完成R2独立审查，Secret不进入产物。对任何未实测服务器出口不承诺上游可用；未提供服务器目标时只交付本地可验证的部署包，不伪造远端部署。

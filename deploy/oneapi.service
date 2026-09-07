@@ -1,0 +1,23 @@
+[Unit]
+Description=OneAPI Node gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oneapi
+Group=oneapi
+WorkingDirectory=/var/lib/oneapi
+EnvironmentFile=/etc/oneapi/oneapi.env
+ExecStart=/usr/bin/node /opt/oneapi/releases/current/server/oneapi.mjs
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oneapi/data
+
+[Install]
+WantedBy=multi-user.target

@@ -39,3 +39,11 @@ Access 应用清单为空，identity providers 空，organization 读取 403。�
 部署已完成、后台管理可用；纯Worker的模型与额度访问受403阻碍，不能宣称端到端可用。保留用户新云端登录，不重登、不反复重试、不返回伪造模型列表。Access仍未配置真实TeamDomain/AUD，默认关闭，管理员key可用。
 
 后续若有明确请求契约修复证据可做有限对照；需要改变架构或新增本地/外部转发服务时先确定新的范围。部署操作见 [DEPLOYMENT.md](../DEPLOYMENT.md)。已审查的临时导入默认关闭；不为排障重新开启凭据导出入口。
+
+## 后续排障部署
+
+WORKER-403最终线上版本97efa97b-f5ec-4daf-bd1b-8e4f39b9fbc0，保留admin-only脱敏诊断。GET Content-Type和User-Agent两个单变量修复尝试无效并回退；读取7次、生成1次，均无自动重试，纯Worker仍未通过。最终管理冒烟通过、登录和数据保留；详细版本、证据与恢复条件见[WORKER-403](../maintenance/WORKER-403.md)。
+
+后续EGRESS-001真实同凭据对照已完成：Worker目录/额度403，经Node目录/额度200并gpt-5.5生成成功。只定位出站路径差异，未确定具体拦截规则；普通API仍直连、临时链路已清理。见[EGRESS-001](../tasks/EGRESS-001.md)。
+
+最新 WS-001 诊断代码部署版本为 `1c8a8ad4-93ad-4449-9039-c29a5432dd73`，临时开关删除后当前版本 `ecdd77a6-466c-4265-9af2-f0ee23b5e652`。官方 WebSocket 一次握手仍 HTML403、0生成；诊断已关闭，健康200、账号精确状态稳定，其他Worker/原DO/Secret名称未变。另同Node真实目录仅增加CF-Worker头即200→403，已复现来源标记影响，但仍不能声明具体WAF规则已确认。详情见 [MARKER-001](MARKER-001.md)、[WS-001](WS-001.md)。纯Worker端到端验收仍未通过。

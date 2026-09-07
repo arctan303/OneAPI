@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "oneapi-network-probe",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      { "name": "PROBE", "class_name": "ProbeDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ProbeDO"] }
+  ],
+  "observability": { "enabled": false }
+}

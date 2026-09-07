@@ -241,6 +241,12 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
     if (control.usage === "delay") await delay(75, request.signal);
     if (control.usage === "network") throw new Error("synthetic usage network failure");
     if (control.usage === "invalid_grant") return Response.json({ error: { code: "invalid_grant" } }, { status: 401 });
+    if (control.usage === "challenge") {
+      return new Response("<!doctype html><title>Attention Required! | Cloudflare</title><span class=\"cf-error-code\">Error 1020</span><p>Sorry, you have been blocked</p><p>SECRET_USAGE_BODY</p>", {
+        status: 403,
+        headers: { "Content-Type": "text/html; charset=UTF-8", Server: "cloudflare", "cf-ray": "usage-mockray-SIN" }
+      });
+    }
     return Response.json({
       plan_type: "mock",
       rate_limit: {

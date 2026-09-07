@@ -1,27 +1,67 @@
 # OneAPI
 
-个人 Codex 订阅网关。首版已归档为 v0.1.0，当前工作区为后续本地扩展。单管理员登录、连接自己的 Codex 账户、模型目录、API key 管理，以及 OpenAI 风格 Responses / Chat Completions 文本与函数工具子集。
+个人 Codex 订阅网关。当前主路径是轻量单服务器：一个 Node.js 进程、一个业务 SQLite 数据库和原有静态管理后台/API。生产运行不依赖 Wrangler、Miniflare、workerd、Docker、Redis、D1 或 KV；Cloudflare Access 管理登录和管理员 API key 兜底继续保留。
 
-## 本地启动
+首次安装预发布包请先阅读 [安装教程](docs/INSTALL.md)；已安装环境的 HTTPS、systemd 和升级边界见 [部署说明](docs/DEPLOYMENT.md)。
 
-需要 Node.js 24（本次验证 24.15.0）。
+原生服务器已在本机通过真实账号、模型目录、官方额度、Responses/Chat 流式与日志验收，独立 R2 复核通过。预发布包体积以 [v0.2.0-dev.1 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1) 附件为准；Node.js 本身另行安装。详见 [SERVER-001 验收](docs/verification/SERVER-001.md) 和 [参考项目调查](docs/verification/SERVER-TRANSITION-worker-research.md)。远端服务器和真实 Access 策略尚未部署验证。
+
+## 单服务器快速开始
+
+需要 Node.js 24.x（至少 24.15，低于 25）。新账号在仓库根目录执行：
 
 ```powershell
 npm ci
-npm run setup
-npm run dev:node
+npm run build:server
+npm run setup:server
+npm start
 ```
 
-打开 [本地后台](http://127.0.0.1:8787/)，用本机 .dev.vars 中的 ADMIN_API_KEY 作为管理员口令登录。连接 Codex 后，在官方网页完成设备码授权；已连接则直接加载模型。后台创建 API key，其他客户端填写 Base URL `http://127.0.0.1:8787/v1`、该 key 和模型 ID。
+`npm run build` 当前也指向 server 构建；`npm run start` 会运行 `dist/server/oneapi.mjs`，并从项目根目录的 `.env` 读取配置。setup 默认生成 `.env`，已有文件只报告 unchanged，不覆盖，也不打印凭据。生产环境可把同一脚本复制到发布包后用 `--env-path` 写入受保护的环境文件，详见 [部署说明](docs/DEPLOYMENT.md) 和 [部署模板](deploy/README.md)。
 
-本地扩展加入官方账号额度、按 key 日志、可选完整正文、模型范围与有效期/停用/限速/并发控制，以及按模型目录选择思考程度。当前最终验收见 [Phase-01 证据](docs/verification/PHASE-01.md)。实际已通过 gpt-5.5 新 key 的 Responses 普通与 Chat 流式调用；目录可读取其他可选模型，但未逐一验证。原 Wrangler 方式仍遇到上游 403，当前本地真实可用入口是 dev:node。Cloudflare 后台已部署，模型与额度请求仍403，尚未通过云端调用验收。
+默认后台地址是 http://127.0.0.1:8787/，API Base URL 是 `http://127.0.0.1:8787/v1`。管理员使用 `ADMIN_API_KEY` 登录；第三方客户端使用后台创建的 API key。首次连接账号时，在官方网页完成设备码授权；已有账号可直接加载模型。本地迁移的账号已验证可直接使用；迁往其他服务器后应验证该服务器的上游出口。
 
-## 检查与边界
+## 已有账号先迁移
 
-`npm test`、`npm run test:dev-node`、`npm run test:extensions`、`npm run typecheck` 为隔离检查；`npm run build` 是 dry-run。`npm run smoke:live` 会发送一次真实目录和一次 gpt-5.5 生成，并清理临时 key。
+已有旧 Wrangler/SQLite Durable Object 账号时，先停止 `npm run dev` 或 `npm run dev:node` 对应的旧进程，再保留原来的三个 secret：`ADMIN_API_KEY`、`GATEWAY_API_KEY`、`TOKEN_ENCRYPTION_KEY`。不要为已有账号运行 setup 生成新值；setup 本身不会覆盖已有文件，但新 secret 会使原账号数据无法按原密钥解密。
 
-归档不包含真实凭据、OAuth 数据库、调用记录、截图或临时测试数据。在另一台机器使用需要初始化并自行授权账号。示例和测试配置只含公开测试值。
+在目标文件不存在的前提下，从仓库根目录执行迁移命令：
 
-详见[使用说明](docs/README.md)、[接口与限制](docs/API.md)、[真实验收](docs/verification/LIVE-001.md)和[独立复核](docs/verification/LIVE-001-review.md)。历史文档中提及的本机截图和 PID 只描述当时证据，不作为仓库附件或当前进程信息。
+```powershell
+node --env-file=.dev.vars dist/server/migrate.mjs --legacy-root .wrangler/state/v3 --target data/oneapi.sqlite
+```
 
-Worker 部署与 Access 配置见 [部署说明](docs/DEPLOYMENT.md)。Phase-02 已部署至 https://api.arcinks.com/，后台管理通过；云端重新登录后模型目录与额度仍返回403，纯Worker调用尚未跑通，见阶段验证记录。
+迁移读取旧库为只读、源库不改，目标必须不存在；旧 Node 开发运行时仍在运行时会被锁检查拒绝；直接运行的 Wrangler 不遵守该锁，必须手动停止，迁移期间源文件变化会使发布失败。迁移完成后，把原三个 secret 安全放入新服务器的 `.env` 或主机环境文件，并补上 `HOST=127.0.0.1`、`PORT=8787`、`DATA_DIR=./data` 及准确的 `PUBLIC_ORIGIN`。SQLite 以 `oneapi.sqlite` 为业务文件，WAL、SHM 和锁辅助文件由 SQLite 正常管理。Cloudflare Worker 实验状态留在旧的 `.wrangler/state/v3`，不会被迁移删除。
+
+迁移目标和旧源不应并发打开；切换前检查真实进程与命令，不用固定 PID 猜测停止对象。迁移的失败码、密钥边界和回滚条件见 [部署说明](docs/DEPLOYMENT.md)。
+
+## Cloudflare Access
+
+后台配置中的两个参数是 Team Domain 和 Application AUD。它们只用于验证 Cloudflare Access 登录，不会替 Cloudflare 创建应用或策略。Access 应用只保护管理页面和 `/admin/*`；不要把交互式 Access 登录套到 `/v1`，否则 OpenAI SDK 会收到浏览器登录跳转。
+
+管理员 API key 始终保留作为应用层兜底。若 Cloudflare Access/WAF 在边缘拦截，请在 Cloudflare 控制台关闭或收窄门禁，让请求先到达应用；OneAPI 内关闭 Access 开关无法绕过边缘拦截。具体边界和配置步骤见 [部署说明](docs/DEPLOYMENT.md)。
+
+## 原有命令与检查入口
+
+以下命令保留给兼容和历史复核使用：
+
+- `npm run setup`：旧 Worker 本地配置初始化。
+- `npm run dev:node`：旧本地 Node 开发入口；新服务器启动使用 `npm start`。
+- `npm run dev`：旧 Wrangler 本地入口，属于 Worker 实验路径。
+- `npm run build:legacy`：旧 Worker dry-run 构建；根 `npm run build` 已改为 server 构建。
+- `npm run build:worker`、`npm run deploy:worker`、`npm run worker:domain`：旧 Worker 实验部署命令，详见 [部署说明中的历史章节](docs/DEPLOYMENT.md)。
+- `npm test`、`npm run typecheck`、`npm run test:dev-node`、`npm run test:extensions`：隔离检查入口；新版本的行为结果见 SERVER-001 验收。
+- `npm run smoke:live`、`npm run smoke:extensions`：会使用账号或订阅调用，运行前需按各自任务预算确认；不属于默认启动流程。
+
+## 验收与历史资料
+
+以下链接保留原有 Git 归档、诊断和验证入口。它们描述各自当时的证据范围，不替代当前单服务器生产验收：
+
+- [Phase-01 证据](docs/verification/PHASE-01.md)、[LIVE-001](docs/verification/LIVE-001.md)、[LIVE-001 独立复核](docs/verification/LIVE-001-review.md)
+- [MARKER-001](docs/verification/MARKER-001.md)、[WS-001](docs/verification/WS-001.md)、[无令牌四路径观测](docs/verification/PURE-WORKER-001.md)
+- [WORKER-403](docs/maintenance/WORKER-403.md)、[403 运行时诊断](docs/verification/403-runtime-diagnosis.md)
+- [EGRESS-001](docs/tasks/EGRESS-001.md)、[WS-001 任务契约](docs/tasks/WS-001.md)
+- [接口与限制](docs/API.md)、[产品契约](docs/Product-Spec.md)、[开发计划](docs/DEV-PLAN.md)、[归档记录](docs/verification/ARCHIVE-001.md)
+- [Worker 部署与历史实验](docs/DEPLOYMENT.md)
+
+旧记录包含 arctan303/OneAPI 的 v0.1.0 归档目标和过去的环境信息；这些信息仅用于 Git 追溯。Cloudflare Worker 出站 403、Node/Worker 对照和临时诊断均保留在上述历史文档中，不作为新服务器已通过的证明。

@@ -8,6 +8,9 @@ export interface Env {
   ALLOW_TEST_HOSTS?: string;
   MOCK_INSTANCE_NONCE?: string;
   ONEAPI_LOCAL_OUTBOUND?: Fetcher;
+  ONEAPI_RELAY_ORIGIN?: string;
+  ONEAPI_RELAY_KEY?: string;
+  ONEAPI_WS_DIAGNOSTIC?: string;
   PUBLIC_ORIGIN?: string;
   WORKER_ORIGIN?: string;
   ACCOUNT_IMPORT_SECRET?: string;

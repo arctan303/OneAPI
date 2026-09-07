@@ -3,11 +3,20 @@ import { abortAllDurableObjects, runInDurableObject, SELF } from "cloudflare:tes
 import { beforeEach, describe, expect, it } from "vitest";
 import { configureMockUpstream, mockUpstreamStats, resetMockUpstream } from "../src/codex/mock";
 import { collectUpstreamDiagnostic, readBoundedErrorCode } from "../src/codex/upstream";
-import type { StoredCredentials } from "../src/types";
+import { decryptRelayRequest, encryptRelayResponse, fixedRelayGenerationBody } from "../src/relay-protocol";
+import type { Env, StoredCredentials } from "../src/types";
 
 const admin = "mock-admin-key-for-tests-only-00000001";
 const gateway = "mock-gateway-key-for-tests-only-0001";
 const auth = (key: string) => ({ Authorization: `Bearer ${key}`, "Content-Type": "application/json" });
+const relayKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+const relayOrigin = "https://relay-test.example";
+const base64Text = (value: string) => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+};
 const accountStub = () => {
   const testEnv = env as unknown as import("../src/types").Env;
   return testEnv.ACCOUNT.get(testEnv.ACCOUNT.idFromName("primary"));
@@ -15,7 +24,7 @@ const accountStub = () => {
 
 async function expireCredentials(): Promise<void> {
   await runInDurableObject(accountStub(), async (instance) => {
-    const account = instance as unknown as {
+    const account = (instance as unknown as { service: unknown }).service as {
       readCredentials(): Promise<StoredCredentials>;
       writeCredentials(value: StoredCredentials): Promise<void>;
     };
@@ -47,6 +56,171 @@ describe("gateway Worker + Durable Object", () => {
     const crossSite = await SELF.fetch("https://example.com/admin/status", { headers: { ...auth(admin), Origin: "https://evil.example" } });
     expect(crossSite.status).toBe(403);
     expect(crossSite.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("keeps egress diagnostics admin-only and disabled by default", async () => {
+    const request = { method: "POST", headers: auth(gateway), body: JSON.stringify({ operation: "ping" }) };
+    const ordinary = await SELF.fetch("https://example.com/admin/diagnostics/egress", request);
+    expect(ordinary.status).toBe(401);
+    const disabled = await SELF.fetch("https://example.com/admin/diagnostics/egress", {
+      ...request,
+      headers: auth(admin)
+    });
+    expect(disabled.status).toBe(503);
+    expect((await disabled.json() as { error: { code: string; diagnostic?: unknown } }).error)
+      .toEqual(expect.objectContaining({ code: "egress_diagnostic_disabled" }));
+  });
+
+  it("keeps websocket diagnostics admin-only and disabled by default", async () => {
+    const request = { method: "POST", headers: auth(gateway), body: "{}" };
+    expect((await SELF.fetch("https://example.com/admin/diagnostics/websocket", request)).status).toBe(401);
+    const disabled = await SELF.fetch("https://example.com/admin/diagnostics/websocket", {
+      ...request,
+      headers: auth(admin),
+    });
+    expect(disabled.status).toBe(503);
+    expect((await disabled.json() as { error: { code: string } }).error.code).toBe("websocket_diagnostic_disabled");
+  });
+
+  it("compares direct and relay models with one credential without exposing it", async () => {
+    await connect();
+    await runInDurableObject(accountStub(), async (instance) => {
+      const account = (instance as unknown as { service: unknown }).service as {
+        env: Env;
+        readCredentials(): Promise<StoredCredentials>;
+        performFetch(request: Request): Promise<Response>;
+        diagnoseEgress(request: Request, requestId: string): Promise<Response>;
+      };
+      const originalFetch = account.performFetch;
+      account.env.ONEAPI_RELAY_ORIGIN = relayOrigin;
+      account.env.ONEAPI_RELAY_KEY = relayKey;
+      const credentials = await account.readCredentials();
+      const calls: string[] = [];
+      let directAuthorization = "";
+      let relayedAuthorization = "";
+      account.performFetch = async (outbound) => {
+        const url = new URL(outbound.url);
+        if (url.origin === "https://chatgpt.com") {
+          calls.push("direct");
+          directAuthorization = outbound.headers.get("authorization") ?? "";
+          return Response.json({ models: [{ slug: "gpt-direct", supported_in_api: true }] });
+        }
+        expect(url.href).toBe(`${relayOrigin}/relay`);
+        calls.push("relay");
+        const plain = await decryptRelayRequest(relayKey, await outbound.json());
+        expect(plain.operation).toBe("models");
+        expect(plain.clientVersion).toBe("0.153.4");
+        expect(plain).not.toHaveProperty("bodyText");
+        relayedAuthorization = plain.headers.authorization ?? "";
+        const bodyText = JSON.stringify({ models: [{ slug: "gpt-relay", supported_in_api: true }] });
+        const envelope = await encryptRelayResponse(relayKey, {
+          requestId: plain.requestId,
+          status: 200,
+          headers: { "content-type": "application/json" },
+          bodyBase64: base64Text(bodyText)
+        });
+        return Response.json(envelope);
+      };
+      const response = await account.diagnoseEgress(new Request("https://example.com/admin/diagnostics/egress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "models" })
+      }), crypto.randomUUID());
+      expect(response.status).toBe(200);
+      const result = await response.json() as {
+        direct: { modelCount: number; modelIds: string[] };
+        relay: { modelCount: number; modelIds: string[] };
+        sameCredential: boolean;
+      };
+      expect(calls).toEqual(["direct", "relay"]);
+      expect(directAuthorization).toBe(`Bearer ${credentials.accessToken}`);
+      expect(relayedAuthorization).toBe(directAuthorization);
+      expect(result).toMatchObject({
+        direct: { modelCount: 1, modelIds: ["gpt-direct"] },
+        relay: { modelCount: 1, modelIds: ["gpt-relay"] },
+        sameCredential: true
+      });
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(credentials.accessToken);
+      expect(serialized).not.toContain(credentials.accountId);
+      account.performFetch = originalFetch;
+      delete account.env.ONEAPI_RELAY_ORIGIN;
+      delete account.env.ONEAPI_RELAY_KEY;
+    });
+  });
+
+  it("binds relay responses to the request and summarizes fixed generation without text", async () => {
+    await connect();
+    await runInDurableObject(accountStub(), async (instance) => {
+      const account = (instance as unknown as { service: unknown }).service as {
+        env: Env;
+        readCredentials(): Promise<StoredCredentials>;
+        performFetch(request: Request): Promise<Response>;
+        diagnoseEgress(request: Request, requestId: string): Promise<Response>;
+      };
+      const originalFetch = account.performFetch;
+      account.env.ONEAPI_RELAY_ORIGIN = relayOrigin;
+      account.env.ONEAPI_RELAY_KEY = relayKey;
+      const credentials = await account.readCredentials();
+      let mismatch = true;
+      account.performFetch = async (outbound) => {
+        const plain = await decryptRelayRequest(relayKey, await outbound.json());
+        if (mismatch) {
+          return Response.json(await encryptRelayResponse(relayKey, {
+            requestId: crypto.randomUUID(),
+            status: 200,
+            headers: {},
+            service: "oneapi-egress-relay"
+          }));
+        }
+        expect(plain.operation).toBe("generate");
+        expect(plain.bodyText).toBe(JSON.stringify(fixedRelayGenerationBody()));
+        expect(plain.headers.authorization).toBe(`Bearer ${credentials.accessToken}`);
+        const terminal = {
+          type: "response.completed",
+          response: {
+            id: "resp_egress",
+            object: "response",
+            status: "completed",
+            model: "gpt-5.5",
+            output: [],
+            output_text: "EGRESS_OK",
+            usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 }
+          }
+        };
+        const sse = `event: response.completed\ndata: ${JSON.stringify(terminal)}\n\n`;
+        return Response.json(await encryptRelayResponse(relayKey, {
+          requestId: plain.requestId,
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+          bodyBase64: base64Text(sse)
+        }));
+      };
+      await expect(account.diagnoseEgress(new Request("https://example.com/admin/diagnostics/egress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "ping" })
+      }), crypto.randomUUID())).rejects.toMatchObject({ code: "relay_response_mismatch" });
+
+      mismatch = false;
+      const response = await account.diagnoseEgress(new Request("https://example.com/admin/diagnostics/egress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "generate" })
+      }), crypto.randomUUID());
+      const result = await response.json() as {
+        relay: { completed: boolean; responseChars: number; usage: Record<string, number> };
+      };
+      expect(result.relay).toMatchObject({
+        completed: true,
+        responseChars: 9,
+        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 }
+      });
+      expect(JSON.stringify(result)).not.toContain("EGRESS_OK");
+      account.performFetch = originalFetch;
+      delete account.env.ONEAPI_RELAY_ORIGIN;
+      delete account.env.ONEAPI_RELAY_KEY;
+    });
   });
 
   it("completes mock device login and stores only encrypted credential material", async () => {
@@ -150,12 +324,15 @@ describe("gateway Worker + Durable Object", () => {
       }
     });
     const diagnostic = await collectUpstreamDiagnostic(html, "https://chatgpt.com/backend-api/codex/models?client_version=test");
-    expect(diagnostic).toEqual({
+    expect(diagnostic).toMatchObject({
       event: "codex_upstream_rejected",
       upstreamHostname: "chatgpt.com",
       upstreamPath: "/backend-api/codex/models",
       status: 403,
       contentType: "text/html; charset=UTF-8",
+      bodyBytes: expect.any(Number),
+      bodySha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      bodyFormat: "html_text",
       server: "cloudflare",
       cfRay: "abc123-SIN",
       cfMitigated: "challenge",
@@ -163,6 +340,7 @@ describe("gateway Worker + Durable Object", () => {
       htmlTitle: "Just a moment...",
       errorCategory: "cloudflare_challenge"
     });
+    expect(diagnostic.bodyBytes).toBeGreaterThan(0);
     expect(JSON.stringify(diagnostic)).not.toContain("SECRET_BODY_MUST_NOT_APPEAR");
 
     const unknownTitle = new Response("<title>Account user@example.com abcdefghijklmnopqrstuvwxyz</title>", {
@@ -185,6 +363,26 @@ describe("gateway Worker + Durable Object", () => {
     expect(sensitiveCode.errorCategory).toBe("structured_json_error");
     expect(JSON.stringify(sensitiveCode)).not.toContain("acct_internal_marker");
     expect(sensitiveCode).not.toHaveProperty("upstreamCode");
+
+    const plainCode = await collectUpstreamDiagnostic(new Response("error code: 1003", {
+      status: 403,
+      headers: { "Content-Type": "text/plain", Server: "cloudflare" }
+    }), "https://chatgpt.com/backend-api/codex/models");
+    expect(plainCode.cfErrorCode).toBe("1003");
+    expect(plainCode.errorCategory).toBe("cloudflare_error_code");
+    expect(plainCode.bodyFormat).toBe("text");
+    const untrustedPlainCode = await collectUpstreamDiagnostic(new Response("error code: 1003", {
+      status: 403,
+      headers: { "Content-Type": "text/plain" }
+    }), "https://chatgpt.com/backend-api/codex/models");
+    expect(untrustedPlainCode).not.toHaveProperty("cfErrorCode");
+
+    const compressed = await collectUpstreamDiagnostic(new Response(new Uint8Array([0x1f, 0x8b, 0x08, 0x00]), {
+      status: 403,
+      headers: { "Content-Type": "text/html", "Content-Encoding": "gzip", Server: "cloudflare" }
+    }), "https://chatgpt.com/backend-api/codex/models");
+    expect(compressed).toMatchObject({ contentEncoding: "gzip", bodyFormat: "gzip_magic" });
+    expect(compressed).not.toHaveProperty("htmlTitle");
   });
 
   it("preserves tool calls, tool results and explicit multi-turn context", async () => {
@@ -400,7 +598,25 @@ describe("gateway Worker + Durable Object", () => {
     configureMockUpstream({ models: "challenge" });
     const challengedModels = await SELF.fetch("https://example.com/v1/models", { headers: auth(gateway) });
     expect(challengedModels.status).toBe(403);
-    expect((await challengedModels.json() as { error: { code: string } }).error.code).toBe("upstream_edge_challenge");
+    const gatewayChallenge = await challengedModels.json() as { error: { code: string; diagnostic?: unknown } };
+    expect(gatewayChallenge.error.code).toBe("upstream_edge_challenge");
+    expect(gatewayChallenge.error).not.toHaveProperty("diagnostic");
+    const adminChallenge = await SELF.fetch("https://example.com/admin/test/models", { headers: auth(admin) });
+    const adminChallengeBody = await adminChallenge.json() as { error: { diagnostic: Record<string, unknown> } };
+    expect(adminChallenge.status).toBe(403);
+    expect(adminChallengeBody.error.diagnostic).toMatchObject({
+      upstreamHostname: "chatgpt.com",
+      upstreamPath: "/backend-api/codex/models",
+      status: 403,
+      server: "cloudflare",
+      cfRay: "mockray-SIN",
+      cfMitigated: "challenge",
+      errorCategory: "cloudflare_challenge",
+      bodyBytes: expect.any(Number),
+      bodySha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      bodyFormat: "html_text"
+    });
+    expect(JSON.stringify(adminChallengeBody)).not.toContain("SECRET_BODY_MUST_NOT_APPEAR");
     resetMockUpstream();
     configureMockUpstream({ models: "oversized_error" });
     const oversizedError = await SELF.fetch("https://example.com/v1/models", { headers: auth(gateway) });
