@@ -4,6 +4,8 @@
 
 ## 活跃计划
 
+最新发布：[v0.2.0-dev.1](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1) 开发版已推送并发布；安装包回下载哈希核对通过，新用户教程随包提供。发布证据见 [RELEASE-002](verification/RELEASE-002.md)。
+
 最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。当前本地8787运行，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
 
 历史交付顺序：[Phase-01](dev-plan/phase-01.md) → [Phase-02](dev-plan/phase-02.md)。Phase-01 本地实现、真实两协议/思考程度/官方额度与页面验收、fresh R2 独立复核均已完成；Phase-02已部署且管理端真实验证通过；用户新云端登录后模型目录/额度仍403，端到端验收受阻，见阶段文档。本轮用户已允许后续隔离Cloudflare测试，但不得影响已有资源；替代下文历史阶段仅本地的授权限制。范围与默认值见 [EXPLORE-001](tasks/EXPLORE-001.md)。

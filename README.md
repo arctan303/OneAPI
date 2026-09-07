@@ -1,5 +1,7 @@
 # OneAPI
 
+当前预发布：[v0.2.0-dev.1](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1)。首次安装请下载 Release 的 `oneapi-server-*.tar.gz` 附件。
+
 个人 Codex 订阅网关。当前主路径是轻量单服务器：一个 Node.js 进程、一个业务 SQLite 数据库和原有静态管理后台/API。生产运行不依赖 Wrangler、Miniflare、workerd、Docker、Redis、D1 或 KV；Cloudflare Access 管理登录和管理员 API key 兜底继续保留。
 
 首次安装预发布包请先阅读 [安装教程](docs/INSTALL.md)；已安装环境的 HTTPS、systemd 和升级边界见 [部署说明](docs/DEPLOYMENT.md)。
