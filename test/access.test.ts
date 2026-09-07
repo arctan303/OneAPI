@@ -174,6 +174,66 @@ describe("Cloudflare Access administrator authentication", () => {
     }
   });
 
+  it("allows only the exact Access callback as a cross-site document navigation", async () => {
+    configureMockAccessJwks({ keys: [firstKey.jwk] });
+    expect((await patchAccess({ enabled: true, teamDomain, applicationAud })).status).toBe(200);
+    const token = await accessJwt(firstKey);
+    const navigationHeaders = {
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Dest": "document",
+      "Cf-Access-Jwt-Assertion": token
+    };
+
+    for (const site of ["cross-site", "same-site"]) {
+      const callback = await SELF.fetch(origin + "/admin/access/login", {
+        headers: { ...navigationHeaders, "Sec-Fetch-Site": site },
+        redirect: "manual"
+      });
+      expect(callback.status).toBe(303);
+      expect(callback.headers.get("location")).toBe(origin + "/");
+      expect(callback.headers.has("set-cookie")).toBe(false);
+    }
+
+    const navigation = { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" };
+    const forged = await accessJwt(firstKey);
+    const forgedToken = forged.slice(0, -1) + (forged.endsWith("A") ? "Q" : "A");
+    expect((await SELF.fetch(origin + "/admin/access/login", { headers: navigation })).status).toBe(401);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigation, "Cf-Access-Jwt-Assertion": await accessJwt(firstKey, { aud: ["wrong-audience"] }) }
+    })).status).toBe(401);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigation, "Cf-Access-Jwt-Assertion": await accessJwt(firstKey, { exp: Math.floor(Date.now() / 1000) }) }
+    })).status).toBe(401);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigation, "Cf-Access-Jwt-Assertion": await accessJwt(firstKey, { iss: "https://other.cloudflareaccess.com" }) }
+    })).status).toBe(401);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigation, "Cf-Access-Jwt-Assertion": forgedToken }
+    })).status).toBe(401);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigation, Authorization: "Bearer " + admin }
+    })).status).toBe(401);
+    expect((await SELF.fetch(origin + "/admin/access/login?next=/admin/status", {
+      headers: { ...navigationHeaders, "Sec-Fetch-Site": "cross-site" }
+    })).status).toBe(403);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigationHeaders, "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty" }
+    })).status).toBe(403);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      headers: { ...navigationHeaders, "Sec-Fetch-Site": "cross-site", Origin: "https://attacker.example" }
+    })).status).toBe(403);
+    expect((await SELF.fetch(origin + "/admin/status", {
+      headers: { ...navigationHeaders, "Sec-Fetch-Site": "cross-site" }
+    })).status).toBe(403);
+    expect((await SELF.fetch(origin + "/admin/access/login", {
+      method: "POST",
+      headers: { ...navigationHeaders, "Sec-Fetch-Site": "cross-site", "Content-Type": "application/json" },
+      body: "{}"
+    })).status).toBe(403);
+    await runInDurableObject(accountStub(), async (_instance, state) => {
+      expect(await state.storage.get("admin-sessions")).toBeUndefined();
+    });
+  });
   it("enforces same-origin mutations, invalidates Access identity on config changes, and makes logout behavior explicit", async () => {
     configureMockAccessJwks({ keys: [firstKey.jwk] });
     await patchAccess({ enabled: true, teamDomain, applicationAud });

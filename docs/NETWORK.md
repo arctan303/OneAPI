@@ -92,7 +92,9 @@ Tunnel 本身仍需按 Cloudflare 安装向导创建并安装连接器凭据；�
 
 ### Access 与 API 客户端
 
-Access 配置保留在后台“设置”。只在管理路径要求浏览器交互登录，/v1 和 /v1/* 应通过更具体的路径策略保留 Bearer API key 调用；不要把整站门禁直接套到 API。后台管理员 key 始终保留，但边缘已拦截的请求必须先在 Cloudflare 控制台关闭或收窄门禁才可到达应用。[路径策略优先级](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/)。
+Access 配置保留在后台“设置”。dev.3根路径固定整页跳转/admin/login，登录后进入/admin/。Cloudflare应用保护/admin/*即可让登录页先经过CF认证，普通口令页不再提供额外CF按钮；无CF保护时直接使用口令。应用Access开关只控制JWT验签，不会同步改变CF策略，启用/关闭时需保持两侧一致。只在管理路径要求浏览器交互登录，/v1 和 /v1/* 应通过更具体的路径策略保留 Bearer API key 调用；不要把整站门禁直接套到 API。后台管理员 key 始终保留，但边缘已拦截的请求必须先在 Cloudflare 控制台关闭或收窄门禁才可到达应用。[路径策略优先级](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/)。
+
+如果 dev.2 在完成 Access 登录后返回 /admin/access/login 并显示 site_not_allowed，可先在地址栏直接打开站点根路径；已有 Access cookie 有效时可恢复进入。此问题属于登录返回导航兼容，修复状态见 [ACCESS-RETURN-001](https://github.com/arctan303/OneAPI/blob/main/docs/maintenance/ACCESS-RETURN-001.md)。不要通过删除 Sec-Fetch-Site 或关闭所有管理接口同源检查来处理。
 
 SSE 是长连接，反代需避免缓冲并适配超时。Cloudflare 有独立代理连接限制，长时间无响应可能超时，不承诺无限长流；断流应由客户端明确处理，不应盲目重放已生成的请求。[连接限制](https://developers.cloudflare.com/fundamentals/reference/connection-limits/)。
 

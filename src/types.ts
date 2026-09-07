@@ -154,6 +154,7 @@ export interface RequestLogSummary {
   bodyExpired: boolean;
   requestTruncated: boolean;
   responseTruncated: boolean;
+  ignoredParameters: string[];
 }
 
 export interface StoredRequestLog extends RequestLogSummary {

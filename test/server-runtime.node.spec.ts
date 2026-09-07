@@ -1,4 +1,6 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -60,6 +62,42 @@ describe("SqliteAccountStorage", () => {
     }
   });
 
+  it("migrates legacy request-log tables idempotently and reads old rows with empty ignored parameters", async () => {
+    const { database, publicDir } = await tempPath("legacy-logs.sqlite");
+    const legacyDatabase = new DatabaseSync(database);
+    legacyDatabase.exec(`CREATE TABLE request_logs (
+      id TEXT PRIMARY KEY, request_id TEXT NOT NULL, key_id TEXT NOT NULL, key_name TEXT NOT NULL,
+      protocol TEXT NOT NULL, model TEXT NOT NULL, started_at INTEGER NOT NULL, completed_at INTEGER,
+      duration_ms INTEGER, http_status INTEGER, outcome TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER,
+      total_tokens INTEGER, body_captured INTEGER NOT NULL, request_truncated INTEGER NOT NULL,
+      response_truncated INTEGER NOT NULL, request_body TEXT, response_body TEXT, body_expires_at INTEGER
+    )`);
+    legacyDatabase.prepare(`INSERT INTO request_logs (
+      id, request_id, key_id, key_name, protocol, model, started_at, completed_at, duration_ms,
+      http_status, outcome, input_tokens, output_tokens, total_tokens, body_captured,
+      request_truncated, response_truncated, request_body, response_body, body_expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      "00000000-0000-4000-8000-000000000010", "legacy-request", "legacy", "Legacy",
+      "responses", "gpt-mock", Date.now(), Date.now(), 1, 200, "completed", 1, 1, 2, 0, 0, 0, null, null, null
+    );
+    legacyDatabase.close();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const runtime = await createServerRuntime({ databasePath: database, publicDir, config, logger: () => undefined });
+      await runtime.ready;
+      try {
+        const response = await runtime.fetch(new Request("http://127.0.0.1/admin/logs", {
+          headers: { Authorization: `Bearer ${config.ADMIN_API_KEY}` }
+        }), { remoteAddress: "127.0.0.1" });
+        expect(response.status).toBe(200);
+        expect((await response.json() as any).data[0]).toMatchObject({
+          requestId: "legacy-request", ignoredParameters: []
+        });
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  });
   it("locks one database per process, persists after close, and imports only into an empty target", async () => {
     const { database } = await tempPath("persistence.sqlite");
     const first = new SqliteAccountStorage(database);
@@ -102,7 +140,7 @@ describe("Node server runtime", () => {
     await runtime.ready;
     const denied = await runtime.fetch(new Request("http://127.0.0.1/health"), { remoteAddress: "203.0.113.7" });
     expect(denied.status).toBe(403);
-    const asset = await runtime.fetch(new Request("http://127.0.0.1/"), { remoteAddress: "127.0.0.1" });
+    const asset = await runtime.fetch(new Request("http://127.0.0.1/admin/login"), { remoteAddress: "127.0.0.1" });
     expect(asset.status).toBe(200);
     expect(await asset.text()).toContain("OneAPI");
     const login = await runtime.fetch(new Request("http://127.0.0.1/admin/session", {
@@ -341,6 +379,7 @@ describe("Node server runtime", () => {
     const { database, publicDir } = await tempPath("access.sqlite");
     const runtime = await createServerRuntime({ databasePath: database, publicDir, config, fetchImpl: mockUpstreamFetch, logger: () => undefined });
     await runtime.ready;
+    const server = await startHttpServer({ runtime, host: "127.0.0.1", port: 0 });
     try {
       const patch = await runtime.fetch(new Request("http://127.0.0.1/admin/access", {
         method: "PATCH", headers: auth(config.ADMIN_API_KEY),
@@ -352,7 +391,28 @@ describe("Node server runtime", () => {
       }), { remoteAddress: "127.0.0.1" });
       expect(session.status).toBe(200);
       expect(await session.json()).toMatchObject({ authenticated: true, provider: "access" });
+      const callback = await new Promise<{ status: number | undefined; location: string | undefined; setCookie: string[] | undefined }>((resolve, reject) => {
+        const request = httpRequest(new URL("admin/access/login", server.url), {
+          headers: {
+            "Cf-Access-Jwt-Assertion": jwt,
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Dest": "document"
+          }
+        }, (response) => {
+          response.resume();
+          response.once("end", () => resolve({
+            status: response.statusCode,
+            location: response.headers.location,
+            setCookie: response.headers["set-cookie"]
+          }));
+        });
+        request.once("error", reject);
+        request.end();
+      });
+      expect(callback).toEqual({ status: 303, location: server.url.href, setCookie: undefined });
     } finally {
+      await server.close();
       await runtime.dispose();
       configureMockAccessJwks(null);
     }

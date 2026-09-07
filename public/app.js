@@ -11,11 +11,12 @@ let logDetailRequestToken = 0;
 let modelCapabilities = new Map();
 let sessionProvider = null;
 let sessionLogoutUrl = null;
-let accessAvailabilityToken = 0;
 let accessConfigRequestToken = 0;
 let accessSaveToken = 0;
 
 const ROUTES = ["overview", "account", "playground", "keys", "logs", "settings"];
+const LOGIN_PATH = "/admin/login";
+const ADMIN_PATH = "/admin/";
 let activeRoute = null;
 function routeFromHash() {
   try {
@@ -51,6 +52,12 @@ function navigateTo(route) {
   if (routeFromHash() === route) renderRoute();
   else location.hash = route;
 }
+function replacePage(path) {
+  if (location.pathname === path && location.search === "") return false;
+  const hash = routeFromHash() ? location.hash : "";
+  location.replace(path + hash);
+  return true;
+}
 function setStreamRouteStatus(running) {
   $("stream-route-status").classList.toggle("hidden", !running);
 }
@@ -75,7 +82,6 @@ function clearAccessConfig() {
   setBadge("access-state", "未读取");
   setMessage("access-message", "");
 }
-function setAccessLoginVisible(enabled) { $("access-login").classList.toggle("hidden", enabled !== true); }
 
 async function api(path, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -95,6 +101,7 @@ function showAuthenticated(expiresAt, session = {}) {
   uiEpoch += 1;
   sessionProvider = session.provider || "session";
   sessionLogoutUrl = safeLogoutPath(session.logoutUrl);
+  if (replacePage(ADMIN_PATH)) return true;
   $("login-view").classList.add("hidden");
   $("login-panel").classList.add("hidden");
   $("console").classList.remove("hidden");
@@ -104,9 +111,10 @@ function showAuthenticated(expiresAt, session = {}) {
     : expiresAt
       ? "本次登录有效至 " + new Date(expiresAt).toLocaleString()
       : "管理员已登录";
+  return false;
 }
 
-function showLogin(message = "") {
+function showLogin(message = "", navigate = true) {
   uiEpoch += 1;
   accountRequestToken += 1;
   modelRequestToken += 1;
@@ -161,15 +169,14 @@ function showLogin(message = "") {
   $("stop-button").disabled = true;
   $("send-button").disabled = false;
   $("console").classList.add("hidden");
+  if (navigate && replacePage(LOGIN_PATH)) return true;
   $("login-view").classList.remove("hidden");
   $("login-panel").classList.remove("hidden");
-  history.replaceState(null, "", "#overview");
   renderRoute({ focus: false });
   $("admin-password").value = "";
   $("save-access-button").disabled = false;
-  setAccessLoginVisible(false);
   setMessage("login-message", message);
-  void loadAccessAvailability();
+  return false;
 }
 
 async function login(event) {
@@ -184,7 +191,7 @@ async function login(event) {
     })).json();
     if (epoch !== uiEpoch) return;
     $("admin-password").value = "";
-    showAuthenticated(session.expiresAt, session);
+    if (showAuthenticated(session.expiresAt, session)) return;
     await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings(), loadAccessConfig()]);
   } catch (error) {
     if (epoch !== uiEpoch) return;
@@ -200,8 +207,9 @@ async function logout() {
   try {
     await adminCall("/admin/session", { method: "DELETE", body: "{}" });
     if (epoch !== uiEpoch) return;
-    showLogin("已退出后台。Codex 连接和 API 密钥未改变。");
-    if (provider === "access" && logoutUrl) window.location.assign(logoutUrl);
+    const accessLogout = provider === "access" && logoutUrl;
+    showLogin("已退出后台。Codex 连接和 API 密钥未改变。", !accessLogout);
+    if (accessLogout) window.location.assign(logoutUrl);
   } catch (error) {
     if (epoch !== uiEpoch) return;
     if (error.status !== 401) setMessage("session-message", error.message);
@@ -593,17 +601,6 @@ async function checkStatus() {
   }
 }
 
-async function loadAccessAvailability() {
-  const epoch = uiEpoch;
-  const requestToken = ++accessAvailabilityToken;
-  try {
-    const body = await (await api("/access/status")).json();
-    if (epoch !== uiEpoch || requestToken !== accessAvailabilityToken) return;
-    setAccessLoginVisible(body?.enabled === true);
-  } catch {
-    if (epoch === uiEpoch && requestToken === accessAvailabilityToken) setAccessLoginVisible(false);
-  }
-}
 async function loadAccessConfig() {
   const epoch = uiEpoch;
   const requestToken = ++accessConfigRequestToken;
@@ -632,7 +629,6 @@ async function saveAccessConfig(event) {
     if (epoch !== uiEpoch || requestToken !== accessSaveToken) return;
     renderAccessConfig(body);
     setMessage("access-message", body?.updatedAt ? "已保存：" + fmtTime(body.updatedAt) : "Access 配置已保存。");
-    await loadAccessAvailability();
   } catch (error) {
     if (epoch === uiEpoch && requestToken === accessSaveToken) setMessage("access-message", error.message);
   } finally {
@@ -645,7 +641,7 @@ async function restoreSession() {
     const session = await (await api("/admin/session")).json();
     if (epoch !== uiEpoch) return;
     if (!session.authenticated) return showLogin();
-    showAuthenticated(session.expiresAt, session);
+    if (showAuthenticated(session.expiresAt, session)) return;
     await Promise.all([checkStatus(), loadApiKeys(), loadLogSettings(), loadAccessConfig()]);
   } catch (error) { if (epoch === uiEpoch) showLogin(error.message); }
 }
@@ -731,6 +727,8 @@ function renderLog(log) {
   const tok = typeof tokens === "object" ? `输入 ${tokens.inputTokens ?? tokens.promptTokens ?? "未知"} / 输出 ${tokens.outputTokens ?? tokens.completionTokens ?? "未知"} / 总计 ${tokens.totalTokens ?? "未知"}` : unknown(tokens);
   const sub = document.createElement("span");
   sub.textContent = `token usage：${tok}`;
+  const ignored = document.createElement("span");
+  ignored.textContent = `未生效参数：${Array.isArray(log.ignoredParameters) && log.ignoredParameters.length > 0 ? log.ignoredParameters.join(", ") : "无"}`;
   const bodyState = document.createElement("span");
   const bodyFlags = [];
   if (bodyIsExpired(log)) {
@@ -741,7 +739,7 @@ function renderLog(log) {
     if (log.responseTruncated) bodyFlags.push("响应正文已截断");
   }
   bodyState.textContent = bodyFlags.length ? bodyFlags.join(" · ") : "正文状态：未截断";
-  main.append(title, keyMeta, meta, sub, bodyState);
+  main.append(title, keyMeta, meta, sub, ignored, bodyState);
   const actions = document.createElement("div");
   actions.className = "key-actions";
   const view = document.createElement("button");
@@ -826,6 +824,7 @@ async function loadLogDetail(id) {
       ["完成", fmtTime(detail.completedAt)],
       ["耗时", detail.durationMs == null ? "未知" : detail.durationMs + " ms"],
       ["token usage", JSON.stringify(detail.usage || detail.tokenUsage || null)],
+      ["未生效参数", Array.isArray(detail.ignoredParameters) && detail.ignoredParameters.length > 0 ? detail.ignoredParameters.join(", ") : "无"],
       ["正文状态", bodyStatus],
       ["正文到期", detail.bodyExpiresAt == null ? "不适用" : fmtTime(detail.bodyExpiresAt)]
     ];

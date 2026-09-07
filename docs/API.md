@@ -1,6 +1,6 @@
 # 本地 API 与管理扩展
 
-本文件描述 Phase-01 的有效接口范围；当前实施与验证进度见 [Phase-01](dev-plan/phase-01.md)。Base URL 为 http://127.0.0.1:8787/v1。机器调用使用 Authorization: Bearer 加后台创建的 API key；不需要管理员 Cookie。
+本文件描述当前源码接口范围；dev.3 参数扩展实施状态见 [PARAM-COMPAT-001](tasks/PARAM-COMPAT-001.md)，发布状态见 [RELEASE-004](verification/RELEASE-004.md)。Base URL 为 http://127.0.0.1:8787/v1。机器调用使用 Authorization: Bearer 加后台创建的 API key；不需要管理员 Cookie。
 
 ## 模型与生成
 
@@ -10,7 +10,18 @@
 | POST /v1/responses | model、input、instructions、stream、tools、tool_choice、parallel_tool_calls、reasoning.effort、store:false、background:false | input 支持文本消息、function_call 和 function_call_output；客户端传完整上下文 |
 | POST /v1/chat/completions | model、messages、stream、tools、tool_choice、parallel_tool_calls、stream_options.include_usage、reasoning_effort | system/developer/user/assistant/tool 与函数工具；普通 JSON 或 SSE |
 
-不支持的字段明确返回 400：temperature、top_p、max_tokens、max_completion_tokens、max_output_tokens、n、response_format、previous_response_id、图片/音频、托管工具和后台任务。不能通过忽略调用方限制伪装兼容。reasoning effort 最终以选定模型目录的能力校验为准。
+### dev.3 参数兼容矩阵
+
+以下是Codex订阅适配范围，不代表Platform API的全部能力。依据[官方Codex请求结构](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/common.rs)核对；具体模型接受能力仍由上游决定。
+
+| 参数 | 处理方式 |
+| --- | --- |
+| Chat max_completion_tokens、max_tokens；Responses max_output_tokens | 正整数校验后兼容忽略，输出上限不生效 |
+| 两协议 temperature、top_p | 数值范围校验后兼容忽略，采样设置不生效 |
+
+上述可选标量null按未指定；未知字段、非法类型/范围和不支持的关键语义仍返回带字段名的400。service_tier、prompt_cache_key、verbosity、额外reasoning选项、n及结构化输出等本版不新增映射，客户端应省略使用默认行为。previous_response_id、图片/音频、托管工具、后台任务、Codex私有client_metadata/access_programs等尚未实现，不会通过忽略它们伪装执行。
+
+兼容忽略参数进入基础日志的ignoredParameters字段（只有字段名，不含参数值），无需开启完整正文记录；详情显示“未生效参数”。JSON/SSE成功响应以X-OneAPI-Ignored-Parameters头返回被忽略的字段名，无忽略时不加该头，不修改标准响应结构。上限被忽略可能产生比客户端设置更多的token；usage仍来自真实上游，不伪造截断。
 
 两种生成接口使用同一 key 模型权限、到期、停用、每分钟限额和并发检查。原全局并发上限仍为 2。每 key RPM 使用从首个已接受请求开始的固定 60 秒窗口，不是自然分钟或滑动窗口。目录列表和后台检查不会自动逐一生成，也不能将目录可选误写为所有模型都已完成真实测试。上游 usage 缺失则返回/显示未知。
 
@@ -59,11 +70,13 @@ for await (const chunk of stream) {
 }
 ```
 
-示例会实际调用两次。自动附带 temperature 或 max_tokens 的客户端需要关闭这些字段；当前不会静默忽略不支持的参数。
+示例会实际调用两次。dev.3对上述明确的采样/token上限参数兼容忽略，并以响应头和基础日志告知未生效字段；其他字段按兼容矩阵处理。
 
 ## 管理接口
 
 所有 /admin/* 数据接口只供管理员。浏览器使用既有 HttpOnly 会话；脚本兼容管理员 Bearer。会话写操作必须同源且 application/json。普通 API key 无权读取日志、账户资料或设置。
+
+ACCESS-RETURN-001 已获用户批准并完成本地验证的修复：GET /admin/access/login 作为 Access 登录返回入口，允许浏览器顶层文档导航继续执行完整的 Access JWT 验证，验证成功后仅 303 返回当前 origin 根路径，不创建本地会话、不返回管理数据、不接受自定义跳转目标。该导航例外不适用于其他管理路径、写请求或跨站 fetch；管理员 Bearer 也不能代替这个入口所需的有效 Access JWT。该兼容修复见 [ACCESS-RETURN-001](maintenance/ACCESS-RETURN-001.md)，发布状态以该任务为准。
 
 | 方法与路径 | 用途 |
 | --- | --- |
@@ -99,7 +112,7 @@ modelAccess 为 `{"mode":"all","models":[]}` 或 `{"mode":"allowlist","models":[
 
 - `GET /access/status`：公开，只返回 `{enabled}`，不公开 Team Domain/AUD。
 - `GET/PATCH /admin/access`：管理员读取/保存 `{enabled,teamDomain,applicationAud}`；返回另含 updatedAt。启用必须填写两个参数。
-- `GET /admin/access/login`：受 Cloudflare Access 保护的同源登录入口，通过管理员身份校验后跳回根页面；不接受外部 redirect 参数。
+- `GET /admin/access/login`：兼容旧Access登录返回路径，完整JWT校验后固定跳回根页面；不接受外部redirect参数。
 - `GET /admin/session`：新增 provider（access/session/bearer/null）及 logoutUrl；Access 每次请求验签，不换成长效管理员 Cookie。
 - `POST /admin/account/import`：仅部署时临时启用；HTTPS、管理员 Bearer 及 X-OneAPI-Import-Secret 同时有效；最大 32 KiB，body 严格为 idToken/accessToken/refreshToken。目标账号必须为空，固定官方目录验证成功才加密保存；成功 204，关闭后 404，已有账号 409。没有导出接口。
 
@@ -124,3 +137,6 @@ ping只验证加密中转身份；models/usage各用同一枚云端access token�
 启用后固定向官方 Codex Responses 目标执行一次 WebSocket 握手。不会刷新或迁移账号，不发送生成消息，连接等待最多 5 秒，升级后观察最多 300ms 再关闭。仅返回 HTTP 状态、升级结果、有限事件布尔值和关闭码，以及非 101 的脱敏诊断；不会返回消息正文、关闭原因、账户凭据或选定模型名称。
 
 `101` 且 `upgraded: true` 仅证明连接升级成功，不代表生成或额度可用；事件布尔值记录观察窗口内的事实。该临时诊断不会让 `/v1/responses` 或 `/v1/chat/completions` 自动改走 WebSocket。验证结果见 [WS-001](tasks/WS-001.md)。
+## 管理页面路由（ACCESS-ENTRY-001）
+
+GET/HEAD /固定跳转/admin/login。GET /admin/login和GET /admin/仅提供无账号数据的静态页面，登录状态通过受保护管理接口确认；前者已认证则进入/admin/，后者未认证则返回/admin/login。合法导航hash保留，不使用任意redirect参数。CF保护/admin/*时整页访问先完成CF登录；没有CF保护时使用普通口令表单。静态页面导航例外不扩展到管理数据接口。

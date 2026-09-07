@@ -9,14 +9,15 @@ const MIGRATABLE_KEYS = new Set([
 const REQUEST_LOG_COLUMNS = [
   "id", "request_id", "key_id", "key_name", "protocol", "model", "started_at", "completed_at",
   "duration_ms", "http_status", "outcome", "input_tokens", "output_tokens", "total_tokens",
-  "body_captured", "request_truncated", "response_truncated", "request_body", "response_body", "body_expires_at"
+  "body_captured", "request_truncated", "response_truncated", "request_body", "response_body", "body_expires_at", "ignored_parameters"
 ] as const;
 const REQUEST_LOG_SCHEMA = `CREATE TABLE IF NOT EXISTS request_logs (
   id TEXT PRIMARY KEY, request_id TEXT NOT NULL, key_id TEXT NOT NULL, key_name TEXT NOT NULL,
   protocol TEXT NOT NULL, model TEXT NOT NULL, started_at INTEGER NOT NULL, completed_at INTEGER,
   duration_ms INTEGER, http_status INTEGER, outcome TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER,
   total_tokens INTEGER, body_captured INTEGER NOT NULL, request_truncated INTEGER NOT NULL,
-  response_truncated INTEGER NOT NULL, request_body TEXT, response_body TEXT, body_expires_at INTEGER
+  response_truncated INTEGER NOT NULL, request_body TEXT, response_body TEXT, body_expires_at INTEGER,
+  ignored_parameters TEXT NOT NULL DEFAULT '[]'
 )`;
 const DELETE = Symbol("delete");
 type OverlayValue = unknown | typeof DELETE;
@@ -87,6 +88,10 @@ export class SqliteAccountStorage implements AccountStorage {
       opened.exec("PRAGMA busy_timeout = 5000");
       opened.exec("CREATE TABLE IF NOT EXISTS oneapi_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
       opened.exec(REQUEST_LOG_SCHEMA);
+      const requestLogColumns = opened.prepare("PRAGMA table_info(request_logs)").all() as Array<{ name: string }>;
+      if (!requestLogColumns.some((column) => column.name === "ignored_parameters")) {
+        opened.exec("ALTER TABLE request_logs ADD COLUMN ignored_parameters TEXT NOT NULL DEFAULT '[]'");
+      }
       opened.exec("CREATE INDEX IF NOT EXISTS request_logs_started_idx ON request_logs(started_at DESC)");
       opened.exec("CREATE INDEX IF NOT EXISTS request_logs_key_idx ON request_logs(key_id, started_at DESC)");
     } catch (error) {
@@ -222,7 +227,7 @@ export class SqliteAccountStorage implements AccountStorage {
           if (typeof log.id !== "string" || log.id.length === 0 || log.completed_at === null || log.completed_at === undefined) {
             throw new Error("Migration accepts completed request logs only");
           }
-          insertLog.run(...sqlBindings(REQUEST_LOG_COLUMNS.map((column) => log[column] ?? null)));
+          insertLog.run(...sqlBindings(REQUEST_LOG_COLUMNS.map((column) => column === "ignored_parameters" ? log[column] ?? "[]" : log[column] ?? null)));
         }
         this.database.exec("COMMIT");
       } catch (error) {

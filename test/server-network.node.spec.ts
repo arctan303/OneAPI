@@ -172,6 +172,21 @@ test('non-.1 IPv4 loopback supports health and the admin session lifecycle', asy
   const origin = server.url.origin;
   try {
     assert.equal((await raw(new URL('/health', origin))).status, 200);
+    for (const method of ['GET', 'HEAD']) {
+      const redirect = await raw(new URL('/?next=https%3A%2F%2Fattacker.example', origin), { method });
+      assert.equal(redirect.status, 302);
+      assert.equal(redirect.headers.location, origin + '/admin/login');
+      if (method === 'HEAD') assert.equal(redirect.body, '');
+    }
+    const navigation = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+    for (const path of ['/admin/login', '/admin/']) {
+      const shell = await raw(new URL(path, origin), { headers: navigation });
+      assert.equal(shell.status, 200);
+      assert.match(shell.body, /<title>OneAPI<\/title>/);
+    }
+    assert.equal((await raw(new URL('/admin/login?next=/admin/', origin), { headers: navigation })).status, 403);
+    assert.equal((await raw(new URL('/admin/status', origin), { headers: navigation })).status, 403);
+    assert.equal((await raw(new URL('/admin/status', origin))).status, 401);
     const login = await raw(new URL('/admin/session', origin), {
       method: 'POST',
       headers: { Origin: origin, 'Content-Type': 'application/json' },

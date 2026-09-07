@@ -26,7 +26,7 @@ try {
   await new Promise(resolve=>setTimeout(resolve,Math.max(10,start.nextPollAt-Date.now()+10)));
   await admin('/admin/device/poll','POST',{login_id:start.id});
   const key=await admin('/admin/api-keys','POST',{name:'Browser fixture key',modelAccess:{mode:'allowlist',models:['gpt-mock']}});
-  const generation=await runtime.fetch(new Request('http://127.0.0.1/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key.key,'Content-Type':'application/json'},body:JSON.stringify({model:'gpt-mock',input:'fixture seed'})}),{remoteAddress:'127.0.0.1'});
+  const generation=await runtime.fetch(new Request('http://127.0.0.1/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key.key,'Content-Type':'application/json'},body:JSON.stringify({model:'gpt-mock',input:'fixture seed',max_output_tokens:32})}),{remoteAddress:'127.0.0.1'});
   if (!generation.ok) throw new Error('Fixture generation failed');
   await generation.arrayBuffer();
   server=await startHttpServer({runtime,host:'127.0.0.1',port:18795});

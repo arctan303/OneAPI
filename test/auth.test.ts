@@ -323,8 +323,33 @@ describe("AUTH-001 administrator session and API keys", () => {
     expect((await SELF.fetch(`${origin}/v1/models`, { headers: bearerHeaders(created.key) })).status).toBe(200);
   });
 
-  it("serves a session-based page without browser-stored administrator or gateway secrets", async () => {
-    const html = await (await SELF.fetch(`${origin}/`)).text();
+  it("serves only the fixed login and admin shells while keeping management data protected", async () => {
+    for (const method of ["GET", "HEAD"]) {
+      const redirect = await SELF.fetch(`${origin}/?next=${encodeURIComponent("https://attacker.example")}`, {
+        method,
+        redirect: "manual"
+      });
+      expect(redirect.status).toBe(302);
+      expect(redirect.headers.get("location")).toBe(`${origin}/admin/login`);
+      if (method === "HEAD") expect(await redirect.text()).toBe("");
+    }
+
+    const navigation = { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" };
+    for (const path of ["/admin/login", "/admin/"]) {
+      const shell = await SELF.fetch(origin + path, { headers: navigation });
+      expect(shell.status).toBe(200);
+      const html = await shell.text();
+      expect(html).toContain('id="login-form"');
+      expect(html).toContain('id="api-key-form"');
+      expect(html).toContain('href="/styles.css"');
+      expect(html).toContain('src="/app.js"');
+      expect(html).not.toContain('id="access-login"');
+    }
+    expect((await SELF.fetch(`${origin}/admin/login?next=/admin/`, { headers: navigation })).status).toBe(403);
+    expect((await SELF.fetch(`${origin}/admin/status`, { headers: navigation })).status).toBe(403);
+    expect((await SELF.fetch(`${origin}/admin/status`)).status).toBe(401);
+
+    const html = await (await SELF.fetch(`${origin}/admin/login`)).text();
     const script = await (await SELF.fetch(`${origin}/app.js`)).text();
     expect(html).toContain('id="login-form"');
     expect(html).toContain('id="api-key-form"');

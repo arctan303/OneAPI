@@ -76,7 +76,14 @@ function publicForwardRequest(request: Request, env: GatewayConfig): Request {
 function enforceAdminBrowserBoundary(request: Request, url: URL): void {
   const origin = request.headers.get("Origin");
   const fetchSite = request.headers.get("Sec-Fetch-Site")?.toLowerCase();
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+  const accessLoginNavigation =
+    (fetchSite === "cross-site" || fetchSite === "same-site") &&
+    request.method === "GET" &&
+    url.pathname === "/admin/access/login" &&
+    url.search === "" &&
+    request.headers.get("Sec-Fetch-Mode")?.toLowerCase() === "navigate" &&
+    request.headers.get("Sec-Fetch-Dest")?.toLowerCase() === "document";
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none" && !accessLoginNavigation) {
     throw new GatewayError(403, "site_not_allowed", "非同源页面的管理请求已拒绝。", undefined, "permission_error");
   }
   if (origin !== null && !sameOrigin(origin, url.origin)) {
@@ -149,12 +156,17 @@ export async function handleGatewayRequest(
         if (env.ALLOW_TEST_HOSTS !== "true" && !access.allowed) {
           throw new GatewayError(403, "host_not_allowed", "请求 Host 未列入允许的 origin。", undefined, "permission_error");
         }
-        const protectedRoute = url.pathname.startsWith("/admin/") || url.pathname.startsWith("/v1/") || url.pathname === "/access/status";
-        if (url.pathname.startsWith("/admin/")) {
+        const pageShell = request.method === "GET" && url.search === "" && (url.pathname === "/admin/login" || url.pathname === "/admin/");
+        const protectedRoute = (!pageShell && url.pathname.startsWith("/admin/")) || url.pathname.startsWith("/v1/") || url.pathname === "/access/status";
+        if (url.pathname.startsWith("/admin/") && !pageShell) {
           enforceAdminBrowserBoundary(request, url);
         }
         const forwardedRequest = publicForwardRequest(request, env);
-        if (request.method === "GET" && url.pathname === "/health") {
+        if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/") {
+          response = Response.redirect(new URL("/admin/login", url.origin).href, 302);
+        } else if (pageShell) {
+          response = await handlers.staticFetch(new Request(new URL("/", url.origin), { headers: forwardedRequest.headers }));
+        } else if (request.method === "GET" && url.pathname === "/health") {
           response = Response.json({
             ok: true,
             service: "oneapi-codex-gateway-demo",
@@ -168,7 +180,7 @@ export async function handleGatewayRequest(
         } else {
           response = await handlers.staticFetch(forwardedRequest);
         }
-        response = secureHeaders(response, protectedRoute);
+        response = secureHeaders(response, protectedRoute || pageShell);
       }
     } catch (error) {
       response = secureHeaders(errorResponse(error, requestId), true);

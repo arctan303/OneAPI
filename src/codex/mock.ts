@@ -1,6 +1,6 @@
 import { CODEX_BASE_URL, AUTH_BASE_URL } from "./constants";
 
-type MockMode = "normal" | "pending" | "delay" | "late" | "network" | "invalid_grant" | "slow_body" | "challenge" | "oversized_error" | "invalid_models";
+type MockMode = "normal" | "pending" | "delay" | "late" | "network" | "invalid_grant" | "slow_body" | "challenge" | "oversized_error" | "invalid_models" | "subscription_catalog";
 interface MockControl { devicePoll: MockMode; refresh: MockMode; models: MockMode; usage: MockMode; persistDelayMs: number; loginStateDelayMs: number }
 const control: MockControl = {
   devicePoll: "normal",
@@ -16,7 +16,9 @@ const stats = {
   devicePoll: 0,
   refresh: 0,
   codexRequests: 0,
+  generationRequests: 0,
   modelRequests: 0,
+  lastGenerationBodyKeys: [] as string[],
   usageRequests: 0,
   lastReasoningPresent: false,
   lastReasoningEffort: "",
@@ -51,7 +53,9 @@ export function resetMockUpstream(): void {
   stats.devicePoll = 0;
   stats.refresh = 0;
   stats.codexRequests = 0;
+  stats.generationRequests = 0;
   stats.modelRequests = 0;
+  stats.lastGenerationBodyKeys = [];
   stats.usageRequests = 0;
   stats.lastReasoningPresent = false;
   stats.lastReasoningEffort = "";
@@ -67,7 +71,7 @@ export function resetMockUpstream(): void {
 }
 
 export function mockUpstreamStats(): Readonly<typeof stats> {
-  return { ...stats };
+  return { ...stats, lastGenerationBodyKeys: [...stats.lastGenerationBodyKeys] };
 }
 
 export function mockPersistenceDelayMs(): number {
@@ -266,17 +270,36 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
   if (url.href.startsWith(`${CODEX_BASE_URL}/models`)) {
     recordCodexRequest(request, url);
     stats.modelRequests += 1;
-    const value = { models: [
-      {
-        slug: "gpt-mock",
-        display_name: "Mock model",
-        supported_in_api: true,
-        supported_reasoning_levels: [{ effort: "none" }, { effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "max" }],
-        default_reasoning_level: "low"
-      },
-      { slug: "gpt-empty", display_name: "No reasoning", supported_in_api: true, supported_reasoning_levels: [], default_reasoning_level: "high" },
-      { slug: "gpt-unknown", display_name: "Unknown reasoning", supported_in_api: true, default_reasoning_level: "high" }
-    ] };
+    const value = control.models === "subscription_catalog"
+      ? { models: [
+        {
+          slug: "gpt-subscription-preview",
+          display_name: "Subscription preview",
+          supported_in_api: false,
+          visibility: "list",
+          supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "xhigh" }],
+          default_reasoning_level: "medium"
+        },
+        {
+          slug: "gpt-hidden-preview",
+          display_name: "Hidden preview",
+          supported_in_api: false,
+          visibility: "hide",
+          supported_reasoning_levels: [{ effort: "high" }],
+          default_reasoning_level: "high"
+        }
+      ] }
+      : { models: [
+        {
+          slug: "gpt-mock",
+          display_name: "Mock model",
+          supported_in_api: true,
+          supported_reasoning_levels: [{ effort: "none" }, { effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "max" }],
+          default_reasoning_level: "low"
+        },
+        { slug: "gpt-empty", display_name: "No reasoning", supported_in_api: true, supported_reasoning_levels: [], default_reasoning_level: "high" },
+        { slug: "gpt-unknown", display_name: "Unknown reasoning", supported_in_api: true, default_reasoning_level: "high" }
+      ] };
     if (control.models === "invalid_models") return Response.json(null);
     if (control.models === "delay") await delay(75, request.signal);
     if (control.models === "late") await new Promise((resolve) => setTimeout(resolve, 75));
@@ -302,7 +325,9 @@ export async function mockUpstreamFetch(request: Request): Promise<Response> {
   }
   if (url.href.startsWith(`${CODEX_BASE_URL}/responses`)) {
     recordCodexRequest(request, url);
+    stats.generationRequests += 1;
     const body = await request.json() as Record<string, unknown>;
+    stats.lastGenerationBodyKeys = Object.keys(body).sort();
     stats.lastReasoningPresent = Object.prototype.hasOwnProperty.call(body, "reasoning");
     const reasoning = body.reasoning && typeof body.reasoning === "object" && !Array.isArray(body.reasoning)
       ? body.reasoning as Record<string, unknown>

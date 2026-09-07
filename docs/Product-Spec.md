@@ -37,7 +37,7 @@ DEC-007/008 替代页面反复填写管理员/调用密钥的交互。仅一个�
 
 本地实施默认值：复用已有 `ADMIN_API_KEY` 作为首次登录口令，建立 7 天可撤销 HttpOnly/SameSite 会话，刷新和重新打开能恢复；不修改现有 Secret 或 OAuth 凭据。管理脚本原有管理员 Bearer 保持兼容。内置模型测试直接接受管理员会话；第三方 `/v1/*` 使用创建的 API key 或兼容的原 `GATEWAY_API_KEY`，不需要后台登录 Cookie。新密钥随机生成，明文只在创建时返回，列表仅元数据/掩码，可撤销。
 
-线上管理入口由 Phase-02 实施 [Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)：后台两参数 Team Domain/Application AUD 及开关，有效 JWT 即管理员；保留 ADMIN_API_KEY 登录。用户在 CF 控制台关闭卡住的门禁，不另设恢复域名。/v1/* 不套交互式门禁。Access 不能解决 ChatGPT 上游 403。
+线上管理入口由 Phase-02 实施 [Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)：后台两参数 Team Domain/Application AUD 及开关，有效 JWT 即管理员；保留 ADMIN_API_KEY 登录。用户在 CF 控制台关闭卡住的门禁，不另设恢复域名。/v1/* 不套交互式门禁。Access 不能解决 ChatGPT 上游 403。 入口补充（ACCESS-ENTRY-001，已实现并本地验证，待发布）：/固定整页跳转/admin/login，后台地址/admin/；CF保护/admin/*时先在边缘完成CF登录，未启用时显示普通密钥表单，不增加CF按钮或折叠提示。只对精确页面外壳允许导航，管理数据接口权限不变；应用开关与CF边缘策略独立，部署须保持一致。
 
 实现、迁移、验收与风险见 [AUTH-001 任务](tasks/AUTH-001.md)。下文为更新后的预期行为；本地实现与 Mock/SDK/浏览器验证已完成，独立聚焦复核通过，当前真实上游验收以 LIVE-001 为准，云端仍未验证。
 ## LIVE-001：本地真实调用（实施与本地真实验证完成）
@@ -86,7 +86,7 @@ DEC-007/008 替代页面反复填写管理员/调用密钥的交互。仅一个�
 | `POST /v1/responses` | `model`、文本 `input`、`instructions`、`stream`；文本消息、函数调用及结果项；函数 `tools` 与可映射的 `tool_choice` | 只接受显式无持久化语义；拒绝 `store:true`、`background:true`、`previous_response_id`、托管工具等。客户端携带完整上下文 |
 | `POST /v1/chat/completions` | `model`、`messages`、`stream`；system/developer/user/assistant/tool 消息；函数 `tools` 与 `tool_choice`；可选流末 usage | `n>1`、结构化输出、音视频等未实现功能拒绝；历史与工具消息转换保持语义 |
 
-`reasoning.effort` / `reasoning_effort` 按当前账号官方模型目录实际 supported_reasoning_levels 接受，解析范围不固定在旧版枚举；缺失或过期能力可自动有限更新一次目录。未指定时省略上游 effort，维持上游默认。模型目录保留标准字段，附加 OneAPI 自定义 capabilities.reasoning（supported_efforts、default_effort）；不是 Platform 标准 /v1/models 字段。不新增每 key 思考程度权限或固定默认。`temperature`、`top_p`、`max_tokens` / `max_completion_tokens` / `max_output_tokens` 等字段不能随手删除：在兼容矩阵中逐项列接受、转换或 400 拒绝。不得忽略调用方限制而声称执行成功。JSON 中未知字段默认返回有字段名的 400，扩展支持必须同时更新文档和行为测试。
+`reasoning.effort` / `reasoning_effort` 按当前账号官方模型目录实际 supported_reasoning_levels 接受，解析范围不固定在旧版枚举；缺失或过期能力可自动有限更新一次目录。未指定时省略上游 effort，维持上游默认。模型目录保留标准字段，附加 OneAPI 自定义 capabilities.reasoning（supported_efforts、default_effort）；不是 Platform 标准 /v1/models 字段。不新增每 key 思考程度权限或固定默认。PARAM-COMPAT-001（用户确认，已实现并本地验证，待发布）替代原全部拒绝规则：Chat的`max_tokens`/`max_completion_tokens`、Responses的`max_output_tokens`及两协议`temperature`/`top_p`校验后默认兼容忽略，基础调用日志记录未生效字段名，并用响应头告知；不声称上限或采样生效。仅限该明确集合；工具、结构化输出、存储及其他未知字段继续明确400。参数含义与降级边界见任务及API兼容矩阵。
 
 非流式 Responses 返回完整 Response 对象；Chat Completions 返回 `choices[].message` 与明确的 `finish_reason`。工具参数保持 JSON 字符串，不以字符串拼接伪造对象；usage 有上游依据才返回，不能把未知写成真实零消耗。
 

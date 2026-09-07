@@ -401,7 +401,6 @@ describe("gateway Worker + Durable Object", () => {
   it("rejects unknown and unsupported parameters instead of silently dropping them", async () => {
     await connect();
     for (const body of [
-      { model: "gpt-mock", input: "x", temperature: 0.2 },
       { model: "gpt-mock", input: "x", store: true },
       { model: "gpt-mock", input: "x", background: true },
       { model: "gpt-mock", input: "x", previous_response_id: "resp_x" }

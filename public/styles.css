@@ -111,9 +111,6 @@ legend { padding: 0 5px; color: var(--muted); font-size: 12px; }
 .detail-bodies { display: grid; gap: 12px; margin-top: 16px; }
 .detail-bodies h4 { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
 .body-preview { min-height: 70px; max-height: 280px; margin: 0; font-size: 12px; }
-.access-login { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
-.access-login .access-divider { display: block; margin-bottom: 9px; color: var(--muted); font-size: 12px; }
-.access-login .button { width: 100%; }
 .key-dialog { width: min(680px, calc(100% - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--ink); }
 .key-dialog::backdrop { background: rgba(20, 30, 25, .35); }
 .key-dialog form { padding: 20px; }

@@ -5,6 +5,7 @@ export const MAX_REQUEST_BYTES = 1024 * 1024;
 export interface NormalizedRequest {
   model: string;
   stream: boolean;
+  ignoredParameters: string[];
   upstream: Record<string, unknown>;
   chat?: { includeUsage: boolean };
 }
@@ -40,6 +41,23 @@ function optionalBoolean(value: unknown, param: string, fallback: boolean): bool
   return value;
 }
 
+function ignoredPositiveInteger(body: JsonObject, name: string, ignored: string[]): void {
+  const value = body[name];
+  if (value === undefined || value === null) return;
+  if (typeof value !== "number") throw new GatewayError(400, "invalid_type", `${name} 必须是正整数。`, name);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new GatewayError(400, "invalid_value", `${name} 必须是正整数。`, name);
+  ignored.push(name);
+}
+
+function ignoredNumberInRange(body: JsonObject, name: string, minimum: number, maximum: number, ignored: string[]): void {
+  const value = body[name];
+  if (value === undefined || value === null) return;
+  if (typeof value !== "number") throw new GatewayError(400, "invalid_type", `${name} 必须是数字。`, name);
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new GatewayError(400, "invalid_value", `${name} 必须在 ${minimum} 到 ${maximum} 之间。`, name);
+  }
+  ignored.push(name);
+}
 export async function readJsonBody(request: Request): Promise<JsonObject> {
   const declared = request.headers.get("content-length");
   if (declared && Number(declared) > MAX_REQUEST_BYTES) {
@@ -173,15 +191,20 @@ function normalizeResponseInput(value: unknown): JsonObject[] {
 }
 
 export function normalizeResponses(body: JsonObject): NormalizedRequest {
-  onlyKeys(body, ["model", "input", "instructions", "stream", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "store", "background"]);
+  onlyKeys(body, ["model", "input", "instructions", "stream", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "store", "background", "max_output_tokens", "temperature", "top_p"]);
   const model = requiredString(body.model, "model");
   if (body.store !== undefined && body.store !== false) throw new GatewayError(400, "unsupported_parameter", "store 只允许 false；Demo 不提供服务端会话存储。", "store");
   if (body.background !== undefined && body.background !== false) throw new GatewayError(400, "unsupported_parameter", "background 只允许 false。", "background");
   if (body.instructions !== undefined && typeof body.instructions !== "string") throw new GatewayError(400, "invalid_type", "instructions 必须是字符串。", "instructions");
   const tools = normalizeTools(body.tools, false);
+  const ignoredParameters: string[] = [];
+  ignoredPositiveInteger(body, "max_output_tokens", ignoredParameters);
+  ignoredNumberInRange(body, "temperature", 0, 2, ignoredParameters);
+  ignoredNumberInRange(body, "top_p", 0, 1, ignoredParameters);
   return {
     model,
     stream: optionalBoolean(body.stream, "stream", false),
+    ignoredParameters,
     upstream: {
       model,
       instructions: body.instructions ?? "",
@@ -245,7 +268,7 @@ function normalizeChatMessages(value: unknown): { instructions: string; input: J
 }
 
 export function normalizeChat(body: JsonObject): NormalizedRequest {
-  onlyKeys(body, ["model", "messages", "stream", "tools", "tool_choice", "parallel_tool_calls", "stream_options", "reasoning_effort"]);
+  onlyKeys(body, ["model", "messages", "stream", "tools", "tool_choice", "parallel_tool_calls", "stream_options", "reasoning_effort", "max_completion_tokens", "max_tokens", "temperature", "top_p"]);
   const model = requiredString(body.model, "model");
   const messages = normalizeChatMessages(body.messages);
   const tools = normalizeTools(body.tools, true);
@@ -257,9 +280,15 @@ export function normalizeChat(body: JsonObject): NormalizedRequest {
   }
   let reasoning: JsonObject | undefined;
   if (body.reasoning_effort !== undefined) reasoning = normalizeReasoning({ effort: body.reasoning_effort }, "reasoning_effort");
+  const ignoredParameters: string[] = [];
+  ignoredPositiveInteger(body, "max_completion_tokens", ignoredParameters);
+  ignoredPositiveInteger(body, "max_tokens", ignoredParameters);
+  ignoredNumberInRange(body, "temperature", 0, 2, ignoredParameters);
+  ignoredNumberInRange(body, "top_p", 0, 1, ignoredParameters);
   return {
     model,
     stream: optionalBoolean(body.stream, "stream", false),
+    ignoredParameters,
     chat: { includeUsage },
     upstream: {
       model,

@@ -288,8 +288,13 @@ export class AccountService {
         response_truncated INTEGER NOT NULL,
         request_body TEXT,
         response_body TEXT,
-        body_expires_at INTEGER
+        body_expires_at INTEGER,
+        ignored_parameters TEXT NOT NULL DEFAULT '[]'
       )`);
+      const requestLogColumns = storage.sql.exec<{ name: string }>("PRAGMA table_info(request_logs)").toArray();
+      if (!requestLogColumns.some((column) => column.name === "ignored_parameters")) {
+        storage.sql.exec("ALTER TABLE request_logs ADD COLUMN ignored_parameters TEXT NOT NULL DEFAULT '[]'");
+      }
       storage.sql.exec("CREATE INDEX IF NOT EXISTS request_logs_started_idx ON request_logs(started_at DESC)");
       storage.sql.exec("CREATE INDEX IF NOT EXISTS request_logs_key_idx ON request_logs(key_id, started_at DESC)");
       await storage.delete(LEASES_KEY);
@@ -1475,7 +1480,8 @@ export class AccountService {
     protocol: "responses" | "chat",
     model: string,
     requestId: string,
-    requestBody: Record<string, unknown>
+    requestBody: Record<string, unknown>,
+    ignoredParameters: string[]
   ): Promise<ActiveLog | null> {
     try {
       const settings = await this.logSettings();
@@ -1487,8 +1493,8 @@ export class AccountService {
         `INSERT INTO request_logs (
           id, request_id, key_id, key_name, protocol, model, started_at, completed_at, duration_ms,
           http_status, outcome, input_tokens, output_tokens, total_tokens, body_captured,
-          request_truncated, response_truncated, request_body, response_body, body_expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'incomplete', NULL, NULL, NULL, ?, ?, 0, ?, NULL, ?)`,
+          request_truncated, response_truncated, request_body, response_body, body_expires_at, ignored_parameters
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'incomplete', NULL, NULL, NULL, ?, ?, 0, ?, NULL, ?, ?)`,
         id,
         requestId,
         identity.id,
@@ -1499,7 +1505,8 @@ export class AccountService {
         settings.captureBodies ? 1 : 0,
         captured.truncated ? 1 : 0,
         captured.body === null ? null : JSON.stringify(captured.body),
-        settings.captureBodies ? startedAt + settings.bodyRetentionDays * 24 * 60 * 60 * 1000 : null
+        settings.captureBodies ? startedAt + settings.bodyRetentionDays * 24 * 60 * 60 * 1000 : null,
+        JSON.stringify(ignoredParameters)
       );
       await this.scheduleLogAlarmSafely(settings);
       return {
@@ -1562,6 +1569,13 @@ export class AccountService {
   }
 
   private logSummary(row: Record<string, string | number | null>): RequestLogSummary {
+    let ignoredParameters: string[] = [];
+    if (typeof row.ignoredParameters === "string") {
+      try {
+        const parsed = JSON.parse(row.ignoredParameters) as unknown;
+        if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) ignoredParameters = [...new Set(parsed)];
+      } catch {}
+    }
     return {
       id: String(row.id),
       requestId: String(row.requestId),
@@ -1582,7 +1596,8 @@ export class AccountService {
       bodyCaptured: row.bodyCaptured === 1,
       bodyExpired: row.bodyCaptured === 1 && row.bodyExpiresAt !== null && Number(row.bodyExpiresAt) <= Date.now(),
       requestTruncated: row.requestTruncated === 1,
-      responseTruncated: row.responseTruncated === 1
+      responseTruncated: row.responseTruncated === 1,
+      ignoredParameters
     };
   }
 
@@ -1591,7 +1606,8 @@ export class AccountService {
       started_at AS startedAt, completed_at AS completedAt, duration_ms AS durationMs, http_status AS httpStatus,
       outcome, input_tokens AS inputTokens, output_tokens AS outputTokens, total_tokens AS totalTokens,
       body_captured AS bodyCaptured, body_expires_at AS bodyExpiresAt,
-      request_truncated AS requestTruncated, response_truncated AS responseTruncated
+      request_truncated AS requestTruncated, response_truncated AS responseTruncated,
+      ignored_parameters AS ignoredParameters
       FROM request_logs`;
   }
 
@@ -1676,7 +1692,7 @@ export class AccountService {
     for (const raw of body.models) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const model = raw as Record<string, unknown>;
-      if (typeof model.slug !== "string" || model.supported_in_api === false || model.visibility === "hide") continue;
+      if (typeof model.slug !== "string" || model.visibility === "hide") continue;
       let supportedEfforts: string[] | null = null;
       if (Array.isArray(model.supported_reasoning_levels)) {
         const parsed: string[] = [];
@@ -1909,12 +1925,15 @@ export class AccountService {
   private async handleGeneration(request: Request, chat: boolean, identity: GatewayIdentity | undefined, requestId: string): Promise<Response> {
     const body = await readJsonBody(request);
     const normalized = chat ? normalizeChat(body) : normalizeResponses(body);
+    const ignoredHeader: Record<string, string> = normalized.ignoredParameters.length > 0
+      ? { "X-OneAPI-Ignored-Parameters": normalized.ignoredParameters.join(", ") }
+      : {};
     const requestGroupId = request.headers.get(LOCAL_REQUEST_GROUP_HEADER) ?? undefined;
     const generationFetch: OutboundFetch = (upstreamRequest) => this.env.MOCK_UPSTREAM === "true"
       ? mockUpstreamFetch(upstreamRequest)
       : this.options.outboundFetch ? this.options.outboundFetch(upstreamRequest, requestGroupId) : fetch(upstreamRequest);
     const activeLog = identity
-      ? await this.startRequestLog(identity, chat ? "chat" : "responses", normalized.model, requestId, body)
+      ? await this.startRequestLog(identity, chat ? "chat" : "responses", normalized.model, requestId, body, normalized.ignoredParameters)
       : null;
     let leaseId: string | null = null;
     let controller: AbortController | null = null;
@@ -2001,7 +2020,7 @@ export class AccountService {
           activeLog.usage = usageFromResponse(value);
         }
         await finish(value);
-        return Response.json(value, { headers: { "Cache-Control": "no-store" } });
+        return Response.json(value, { headers: { "Cache-Control": "no-store", ...ignoredHeader } });
       }
 
       if (activeLog) {
@@ -2044,7 +2063,8 @@ export class AccountService {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-store",
           Connection: "keep-alive",
-          "X-OneAPI-Internal-Lease": leaseId
+          "X-OneAPI-Internal-Lease": leaseId,
+          ...ignoredHeader
         }
       });
     } catch (error) {

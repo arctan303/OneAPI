@@ -231,6 +231,45 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
     expect((await invalid.json() as any).error.code).toBe("invalid_models_response");
   });
 
+  it("keeps subscription-listed models independent of Platform API support while preserving key scope", async () => {
+    await connect();
+    configureMockUpstream({ models: "subscription_catalog" });
+    const key = await createKey("subscription preview", {
+      modelAccess: { mode: "allowlist", models: ["gpt-subscription-preview"] }
+    });
+
+    const adminModels = await (await SELF.fetch(origin + "/admin/test/models", { headers: auth(admin) })).json() as any;
+    expect(adminModels.data).toEqual([expect.objectContaining({
+      id: "gpt-subscription-preview",
+      capabilities: {
+        reasoning: {
+          supported_efforts: ["low", "medium", "high", "xhigh"],
+          default_effort: "medium"
+        }
+      }
+    })]);
+
+    const keyModels = await (await SELF.fetch(origin + "/v1/models", { headers: auth(key.key) })).json() as any;
+    expect(keyModels.data.map((model: { id: string }) => model.id)).toEqual(["gpt-subscription-preview"]);
+    const generated = await SELF.fetch(origin + "/v1/responses", {
+      method: "POST",
+      headers: auth(key.key),
+      body: JSON.stringify({ model: "gpt-subscription-preview", input: "preview", reasoning: { effort: "xhigh" } })
+    });
+    expect(generated.status).toBe(200);
+    expect(mockUpstreamStats().lastReasoningEffort).toBe("xhigh");
+
+    const beforeDenied = mockUpstreamStats().codexRequests;
+    const denied = await SELF.fetch(origin + "/v1/responses", {
+      method: "POST",
+      headers: auth(key.key),
+      body: JSON.stringify({ model: "gpt-hidden-preview", input: "denied" })
+    });
+    expect(denied.status).toBe(403);
+    expect((await denied.json() as any).error.code).toBe("model_not_allowed");
+    expect(mockUpstreamStats().codexRequests).toBe(beforeDenied);
+  });
+
   it("auto-loads reasoning capabilities once and validates and forwards both protocols exactly", async () => {
     await connect();
     const key = await createKey("reasoning generation");
@@ -396,6 +435,92 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
     expect(entry).toMatchObject({ outcome: "error", httpStatus: 503 });
   });
 
+  it("validates and reports compatibility-only generation parameters without forwarding them", async () => {
+    await connect();
+    const key = await createKey("compat audit");
+    const responseTool = {
+      type: "function", name: "get_weather", description: "Get weather",
+      parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] }
+    };
+    const chatTool = { type: "function", function: { name: "get_weather", description: "Get weather", parameters: responseTool.parameters } };
+    const invoke = async (path: string, body: Record<string, unknown>, expected: string[]) => {
+      const before = mockUpstreamStats().generationRequests;
+      const response = await SELF.fetch(`${origin}${path}`, {
+        method: "POST", headers: auth(key.key), body: JSON.stringify(body)
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("X-OneAPI-Ignored-Parameters")).toBe(expected.join(", "));
+      const text = await response.text();
+      expect(text).toContain("get_weather");
+      const stats = mockUpstreamStats();
+      expect(stats.generationRequests).toBe(before + 1);
+      expect(stats.lastGenerationBodyKeys).not.toEqual(expect.arrayContaining([
+        "max_completion_tokens", "max_tokens", "max_output_tokens", "temperature", "top_p"
+      ]));
+      return text;
+    };
+
+    const responsesBase = { model: "gpt-mock", input: "call_tool weather", tools: [responseTool] };
+    const chatBase = { model: "gpt-mock", messages: [{ role: "user", content: "call_tool weather" }], tools: [chatTool] };
+    expect(await invoke("/v1/responses", {
+      ...responsesBase, stream: false, max_output_tokens: 128, temperature: 0.2, top_p: 0.9
+    }, ["max_output_tokens", "temperature", "top_p"])).toContain('"total_tokens":12');
+    expect(await invoke("/v1/responses", {
+      ...responsesBase, stream: true, max_output_tokens: 64
+    }, ["max_output_tokens"])).toContain("response.completed");
+    expect(await invoke("/v1/chat/completions", {
+      ...chatBase, stream: false, max_completion_tokens: 128, max_tokens: 256, temperature: 0, top_p: 1
+    }, ["max_completion_tokens", "max_tokens", "temperature", "top_p"])).toContain('"total_tokens":12');
+    expect(await invoke("/v1/chat/completions", {
+      ...chatBase, stream: true, stream_options: { include_usage: true }, max_completion_tokens: 64
+    }, ["max_completion_tokens"])).toContain("[DONE]");
+
+    const nullResponse = await SELF.fetch(`${origin}/v1/chat/completions`, {
+      method: "POST", headers: auth(key.key),
+      body: JSON.stringify({ ...chatBase, max_completion_tokens: null, max_tokens: null, temperature: null, top_p: null })
+    });
+    expect(nullResponse.status).toBe(200);
+    expect(nullResponse.headers.has("X-OneAPI-Ignored-Parameters")).toBe(false);
+    await nullResponse.text();
+
+    const entries = (await logs(key.id)).data as any[];
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ protocol: "responses", ignoredParameters: ["max_output_tokens", "temperature", "top_p"], bodyCaptured: false }),
+      expect.objectContaining({ protocol: "responses", ignoredParameters: ["max_output_tokens"], bodyCaptured: false }),
+      expect.objectContaining({ protocol: "chat", ignoredParameters: ["max_completion_tokens", "max_tokens", "temperature", "top_p"], bodyCaptured: false }),
+      expect.objectContaining({ protocol: "chat", ignoredParameters: ["max_completion_tokens"], bodyCaptured: false }),
+      expect.objectContaining({ protocol: "chat", ignoredParameters: [], bodyCaptured: false })
+    ]));
+    for (const entry of entries) {
+      const detail = await (await SELF.fetch(`${origin}/admin/logs/${entry.id}`, { headers: auth(admin) })).json() as any;
+      expect(detail.ignoredParameters).toEqual(entry.ignoredParameters);
+      expect(detail.requestBody).toBeNull();
+    }
+
+    const generationBeforeInvalid = mockUpstreamStats().generationRequests;
+    for (const [path, body, param] of [
+      ["/v1/responses", { ...responsesBase, max_output_tokens: 0 }, "max_output_tokens"],
+      ["/v1/responses", { ...responsesBase, max_output_tokens: 1.5 }, "max_output_tokens"],
+      ["/v1/responses", { ...responsesBase, temperature: -0.1 }, "temperature"],
+      ["/v1/responses", { ...responsesBase, top_p: 1.1 }, "top_p"],
+      ["/v1/chat/completions", { ...chatBase, max_tokens: "128" }, "max_tokens"],
+      ["/v1/chat/completions", { ...chatBase, max_completion_tokens: 0 }, "max_completion_tokens"],
+      ["/v1/responses", { ...responsesBase, service_tier: "priority" }, "service_tier"],
+      ["/v1/chat/completions", { ...chatBase, max_output_tokens: 10 }, "max_output_tokens"]
+    ] as const) {
+      const response = await SELF.fetch(`${origin}${path}`, { method: "POST", headers: auth(key.key), body: JSON.stringify(body) });
+      expect(response.status).toBe(400);
+      expect((await response.json() as any).error.param).toBe(param);
+    }
+    expect(mockUpstreamStats().generationRequests).toBe(generationBeforeInvalid);
+
+    expect((await patchKey(key.id, { modelAccess: { mode: "allowlist", models: ["gpt-other"] } })).status).toBe(200);
+    const denied = await generate(key.key, "denied after log start", { max_output_tokens: 32 });
+    expect(denied.status).toBe(403);
+    expect(((await logs(key.id)).data[0] as any)).toMatchObject({
+      outcome: "error", ignoredParameters: ["max_output_tokens"], bodyCaptured: false
+    });
+  });
   it("keeps summary logs by default, preserves unknown usage, and keeps revoked-key history", async () => {
     await connect();
     const key = await createKey("audited");
@@ -499,9 +624,10 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
       body: JSON.stringify({ maxBodyBytes: 262144 })
     })).status).toBe(200);
     const largeInput = "z".repeat(150_000);
-    expect((await generate(key.key, largeInput)).status).toBe(200);
+    expect((await generate(key.key, largeInput, { max_output_tokens: 32 })).status).toBe(200);
     const largeSummary = (await logs(key.id)).data[0] as any;
     expect(largeSummary.requestTruncated).toBe(false);
+    expect(largeSummary.ignoredParameters).toEqual(["max_output_tokens"]);
     const largeDetail = await (await SELF.fetch(`${origin}/admin/logs/${largeSummary.id}`, { headers: auth(admin) })).json() as any;
     expect(largeDetail.requestBody.input).toBe(largeInput);
 
@@ -510,7 +636,7 @@ describe("Phase-01 account usage, per-key controls, and request logs", () => {
       state.storage.sql.exec("UPDATE request_logs SET body_expires_at = ? WHERE id = ?", forcedExpiry, largeSummary.id);
     });
     const expired = await (await SELF.fetch(`${origin}/admin/logs/${largeSummary.id}`, { headers: auth(admin) })).json() as any;
-    expect(expired).toMatchObject({ bodyCaptured: true, bodyExpired: true, requestBody: null, responseBody: null, bodyExpiresAt: forcedExpiry });
+    expect(expired).toMatchObject({ bodyCaptured: true, bodyExpired: true, requestBody: null, responseBody: null, bodyExpiresAt: forcedExpiry, ignoredParameters: ["max_output_tokens"] });
   });
 
   it("schedules alarm cleanup, preserves expiry reasons and bounds completed logs while retaining active rows", async () => {
