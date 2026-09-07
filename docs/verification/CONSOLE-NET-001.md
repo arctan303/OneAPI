@@ -1,6 +1,6 @@
 # CONSOLE-NET-001 验证记录
 
-基线：ccc04a2b 之后本地工作区，2026-09-07；未提交或发布本轮修改。任务外 .codex/evolution/signals.md 未纳入成果。网络第一批和 UI 第二批已实现并验收；第三批首审发现的回环判定与自动发现地址超限问题已修复，一次聚焦复核通过；本地新版已启动。
+基线：ccc04a2b 之后本地工作区，2026-09-07；以下记录为发布前实施验收，后续已随 v0.2.0-dev.2 发布，见 [RELEASE-003](RELEASE-003.md)。任务外 .codex/evolution/signals.md 未纳入成果。网络第一批和 UI 第二批已实现并验收；第三批首审发现的回环判定与自动发现地址超限问题已修复，一次聚焦复核通过；本地新版已启动。
 
 ## 第一批：网络与配置
 
@@ -29,4 +29,4 @@ fresh R2 首审覆盖本次网络/会话/配置秘密保存及 UI 退出清理�
 
 聚焦修复后（reviewer 已关闭两项问题）：网络/runtime 15/15，向导9通过/1既有symlink权限跳过，typecheck通过；127.0.0.2 health、登录、会话、退出实际回归及33网卡保存失败不覆盖通过。主会话重跑共享Worker84/84、HTTP fixture5/5；重新构建bundle261174 bytes / payload397981 bytes / runtimePackages0，独立manifest产物启动1/1。最新密钥扫描204源码+14产物，5个去重配置秘密值，0命中（本次按变量名含 KEY/TOKEN/SECRET/PASSWORD 且长度至少16筛选并去重）。原子保存和UI证据未因本次聚焦修改失效。
 
-最终本地启动：主会话以原 .env 启动 dist/server/oneapi.mjs，PID24796，地址 http://127.0.0.1:8787/。只读回读health/status/key目录与三个静态资源：health=true、connected=true、reauthenticationRequired=false、keyCount=1、assetsMatch=true；.env的启动前后SHA256一致。没有真实模型或额度请求。隔离Mock进程与专用浏览器已关闭。证据在忽略目录output/server-live/post-start.json及console-v2日志；截图在output/playwright/。当前构建在dist/server，尚未提交或发布；没有覆盖旧版发布归档。
+最终本地启动：主会话以原 .env 启动 dist/server/oneapi.mjs，PID24796，地址 http://127.0.0.1:8787/。只读回读health/status/key目录与三个静态资源：health=true、connected=true、reauthenticationRequired=false、keyCount=1、assetsMatch=true；.env的启动前后SHA256一致。没有真实模型或额度请求。隔离Mock进程与专用浏览器已关闭。证据在忽略目录output/server-live/post-start.json及console-v2日志；截图在output/playwright/。当时构建在dist/server，尚未发布；随后已由RELEASE-003完成新版本发布，没有覆盖旧版发布归档。

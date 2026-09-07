@@ -30,6 +30,6 @@
 4. 构建、针对性测试、类型检查与 diff 自查；必要时覆盖共享 gateway 的旧 Worker 回归；R2 独立审查完成后再重启已验证为本仓库的本地服务。
 5. 源码和独立部署包都包含向导，安装文档明确保存后重启、LAN HTTP 信任边界、Tunnel/公网反代配置差异。
 
-实施：网络、启动参数、向导与六区后台完成。验证：网络/runtime15/15、HTTP5/5、Worker84/84、typecheck、独立包1/1通过；向导9通过/1跳过（Windows文件symlink权限），目录junction拒绝与受保护ACL保持通过；桌面和手机浏览器验收通过。审查：fresh首审发现两项问题，实质修复及一次聚焦复核后通过，见[独立复核](../verification/CONSOLE-NET-001-review.md)。本地：新版已用原.env与数据库启动，127.0.0.1:8787健康、connected=true、reauthenticationRequired=false，现有1个key可读取，三个页面资源与构建一致，配置哈希未变。发布：用户已授权发布 v0.2.0-dev.2，进度与结果见 [RELEASE-003](../verification/RELEASE-003.md)；不涉及线上Worker变化。
+实施：网络、启动参数、向导与六区后台完成。验证：网络/runtime15/15、HTTP5/5、Worker84/84、typecheck、独立包1/1通过；向导9通过/1跳过（Windows文件symlink权限），目录junction拒绝与受保护ACL保持通过；桌面和手机浏览器验收通过。审查：fresh首审发现两项问题，实质修复及一次聚焦复核后通过，见[独立复核](../verification/CONSOLE-NET-001-review.md)。本地：新版已用原.env与数据库启动，127.0.0.1:8787健康、connected=true、reauthenticationRequired=false，现有1个key可读取，三个页面资源与构建一致，配置哈希未变。发布：已提交并推送为 v0.2.0-dev.2，GitHub prerelease 与两个附件回读通过，见 [RELEASE-003](../verification/RELEASE-003.md)；不涉及线上Worker变化。
 
 启动参数补充（用户随后明确）：支持 --host、--port、--lan、--public-origin、--help；启动参数覆盖环境配置，只影响本次进程，不修改文件。--lan 根据具体私网绑定 IP 或通配绑定时本机当前网卡的 RFC1918/ULA 地址生成精确 LAN_ORIGINS，启动输出可访问地址；不接受任意 Host。命令行参数校验先于打开数据库。公网直连使用 HTTPS 终止反代，Cloudflare Tunnel 与传统反代均为支持的安装拓扑，不要求使用 Cloudflare。

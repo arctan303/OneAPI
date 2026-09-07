@@ -4,9 +4,9 @@
 
 ## 活跃计划
 
-当前执行：[CONSOLE-NET-001](tasks/CONSOLE-NET-001.md)，命令行网络配置向导、显式私网访问和六区管理后台；本地实施、浏览器验收与网络边界独立复核均已完成，新版已在127.0.0.1:8787启动。用户已授权发布 v0.2.0-dev.2，正在执行 [RELEASE-003](verification/RELEASE-003.md) 的打包、推送和回读。
+当前执行：[CONSOLE-NET-001](tasks/CONSOLE-NET-001.md)，命令行网络配置向导、显式私网访问和六区管理后台；本地实施、浏览器验收与网络边界独立复核均已完成，新版已在127.0.0.1:8787启动。已随 v0.2.0-dev.2 测试版推送发布，安装包回下载核对通过，见 [RELEASE-003](verification/RELEASE-003.md)。
 
-最新发布：[v0.2.0-dev.1](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1) 开发版已推送并发布；安装包回下载哈希核对通过，新用户教程随包提供。发布证据见 [RELEASE-002](verification/RELEASE-002.md)。
+最新发布：[v0.2.0-dev.2](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.2) 测试版已推送并发布；安装包与校验和回下载一致，安装和网络教程随包提供。发布证据见 [RELEASE-003](verification/RELEASE-003.md)；上一版记录保留在 [RELEASE-002](verification/RELEASE-002.md)。
 
 最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。本地8787现运行 CONSOLE-NET-001 新版，账号配置与数据库保留，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
 
