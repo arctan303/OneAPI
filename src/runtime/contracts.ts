@@ -48,14 +48,19 @@ export interface GatewayConfig {
   GATEWAY_API_KEY: string;
   TOKEN_ENCRYPTION_KEY: string;
   PUBLIC_ORIGIN?: string;
+  LAN_ORIGINS?: string;
   WORKER_ORIGIN?: string;
   MOCK_UPSTREAM?: string;
   MOCK_INSTANCE_NONCE?: string;
   ALLOW_TEST_HOSTS?: string;
 }
 
+export interface AccountRequestContext {
+  trustedLanHttp?: boolean;
+}
+
 export interface GatewayHandlers {
-  accountFetch(request: Request): Promise<Response>;
+  accountFetch(request: Request, context?: AccountRequestContext): Promise<Response>;
   staticFetch(request: Request): Promise<Response>;
   cancelLease?(leaseId: string): Promise<void>;
   allowInternalControl?: boolean;

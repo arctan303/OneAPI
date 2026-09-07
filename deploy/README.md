@@ -1,32 +1,34 @@
 # OneAPI Node 部署
 
+> v0.2.0-dev.2 新增启动参数、可选配置向导、分区后台与居中登录页。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](../docs/NETWORK.md)。
+
 本目录提供独立 Node 运行时的部署模板。发布管理员可用其中的 setup 脚本生成本机环境文件，并按本文路径安装 Node、systemd 与 Caddy。执行前请审查主机权限、发布版本和公网域名。
 
-## v0.2.0-dev.1 首次安装
+## v0.2.0-dev.2 首次安装
 
-这是 private 仓库。请先在浏览器登录拥有仓库读取权限的 GitHub 账户，再从固定的 [v0.2.0-dev.1 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1) 页面下载 tar.gz 和对应 `.sha256` 资产。也可以使用已认证的 GitHub CLI：
+这是 private 仓库。请先在浏览器登录拥有仓库读取权限的 GitHub 账户，再从固定的 [v0.2.0-dev.2 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.2) 页面下载 tar.gz 和对应 `.sha256` 资产。也可以使用已认证的 GitHub CLI：
 
     gh auth login
-    gh release download v0.2.0-dev.1 --repo arctan303/OneAPI --pattern 'oneapi-server-0.2.0-dev.1.tar.gz*'
+    gh release download v0.2.0-dev.2 --repo arctan303/OneAPI --pattern 'oneapi-server-0.2.0-dev.2.tar.gz*'
 
 没有该 private 仓库读取权限时，请联系仓库所有者转发 tar.gz 和 `.sha256` 文件。下载后校验：
 
-    sha256sum -c oneapi-server-0.2.0-dev.1.tar.gz.sha256
+    sha256sum -c oneapi-server-0.2.0-dev.2.tar.gz.sha256
 
 macOS 可用：
 
-    shasum -a 256 -c oneapi-server-0.2.0-dev.1.tar.gz.sha256
+    shasum -a 256 -c oneapi-server-0.2.0-dev.2.tar.gz.sha256
 
-Windows PowerShell 可用 `Get-FileHash .\oneapi-server-0.2.0-dev.1.tar.gz -Algorithm SHA256`，再与 `.sha256` 文件中的值比较。确认一致后解压并进入包内 `server/` 目录；包内已经包含运行 bundle，不需要 `npm install`：
+Windows PowerShell 可用 `Get-FileHash .\oneapi-server-0.2.0-dev.2.tar.gz -Algorithm SHA256`，再与 `.sha256` 文件中的值比较。确认一致后解压并进入包内 `server/` 目录；包内已经包含运行 bundle，不需要 `npm install`：
 
-    tar -xzf oneapi-server-0.2.0-dev.1.tar.gz
+    tar -xzf oneapi-server-0.2.0-dev.2.tar.gz
     cd server
     node setup.mjs
     node --env-file=.env oneapi.mjs
 
 setup 只在 `.env` 不存在时创建，输出不包含密钥值。请用编辑器读取 `.env` 中的 `ADMIN_API_KEY` 并在浏览器登录，不要在终端回显环境文件。本机浏览器访问 `http://localhost:8787/`；远程主机可用 `ssh -N -L 8787:127.0.0.1:8787 user@server` 建立隧道。首次登录后完成 Codex 设备码授权，加载官方当前模型目录，按需选择模型和思考程度并创建 API key；API Base URL 为 `http://localhost:8787/v1`，正式 HTTPS 时替换为公网 origin 加 `/v1`。
 
-正式 HTTPS、Caddy、systemd、升级和旧账号迁移见固定版本 [安装教程](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.1/docs/INSTALL.md) 与 [部署说明](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.1/docs/DEPLOYMENT.md)。若官方未返回 5 小时额度窗口，应显示未知；遇到目录/额度错误时保留状态码和应用错误码，不循环发送请求。
+正式 HTTPS、Caddy、systemd、升级和旧账号迁移见固定版本 [安装教程](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.2/docs/INSTALL.md) 与 [部署说明](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.2/docs/DEPLOYMENT.md)。若官方未返回 5 小时额度窗口，应显示未知；遇到目录/额度错误时保留状态码和应用错误码，不循环发送请求。
 
 ## 运行时与发布包
 

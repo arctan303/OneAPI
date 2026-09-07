@@ -1,17 +1,13 @@
 import { createServer } from 'node:http';
-import { isIP } from 'node:net';
+import { isLoopbackAddress, isLoopbackHost, isTrustedLanPeer, parseLanOrigins } from './network-config.mjs';
 
 const MAX_BODY = 1024 * 1024;
 const HOP_HEADERS = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 const INTERNAL_HEADERS = new Set(['x-oneapi-local-request-group', 'x-oneapi-local-request-id', 'x-oneapi-local-bridge-token']);
 
-function loopback(address = '') {
-  return address === '::1' || address === '127.0.0.1' || address.startsWith('127.') && isIP(address) === 4
-    || address.startsWith('::ffff:127.') && isIP(address) === 6;
-}
 
-function requestUrl(request, publicOrigin) {
+function requestUrl(request, publicOrigin, lanOriginsByHost) {
   const hostCount = request.rawHeaders.filter((_, i) => i % 2 === 0 && request.rawHeaders[i].toLowerCase() === 'host').length;
   if (hostCount !== 1 || !request.headers.host || /[\s/@\\?#]/.test(request.headers.host)) throw new Error('invalid_host');
   const host = request.headers.host;
@@ -21,10 +17,16 @@ function requestUrl(request, publicOrigin) {
   } else {
     const local = new URL('http://' + host);
     const hostname = local.hostname.replace(/^\[|\]$/g, '');
-    if (!loopback(request.socket.remoteAddress) || !(hostname === 'localhost' || loopback(hostname))) {
-      throw new Error('host_not_allowed');
+    const lanOrigin = lanOriginsByHost.get(local.host.toLowerCase());
+    if (lanOrigin) {
+      if (!isTrustedLanPeer(request.socket.remoteAddress)) throw new Error('host_not_allowed');
+      base = lanOrigin;
+    } else {
+      if (!isLoopbackAddress(request.socket.remoteAddress) || !isLoopbackHost(hostname)) {
+        throw new Error('host_not_allowed');
+      }
+      base = local.origin;
     }
-    base = local.origin;
   }
   const target = request.url ?? '/';
   if (!target.startsWith('/') || target.startsWith('//') || target.includes('\\')) throw new Error('invalid_target');
@@ -122,7 +124,16 @@ async function pump(source, response, signal, method) {
   }
 }
 
-export async function startHttpServer({ runtime, host = '127.0.0.1', port = 8787, publicOrigin }) {
+export async function startHttpServer({ runtime, host = '127.0.0.1', port = 8787, publicOrigin, lanOrigins = [] }) {
+  const configuredLanOrigins = Array.isArray(lanOrigins) ? lanOrigins.flatMap(parseLanOrigins) : parseLanOrigins(lanOrigins);
+  const lanOriginsByHost = new Map();
+  for (const origin of configuredLanOrigins) {
+    const hostKey = new URL(origin).host.toLowerCase();
+    if (lanOriginsByHost.has(hostKey) && lanOriginsByHost.get(hostKey) !== origin) {
+      throw new Error('LAN_ORIGINS cannot contain both HTTP and HTTPS for the same host');
+    }
+    lanOriginsByHost.set(hostKey, origin);
+  }
   const controllers = new Set();
   const pending = new Set();
   const server = createServer({ requestTimeout: 30_000, headersTimeout: 15_000, keepAliveTimeout: 5_000 }, (request, response) => {
@@ -134,7 +145,7 @@ export async function startHttpServer({ runtime, host = '127.0.0.1', port = 8787
     response.once('close', onClose);
     const task = (async () => {
       let url;
-      try { url = requestUrl(request, publicOrigin); }
+      try { url = requestUrl(request, publicOrigin, lanOriginsByHost); }
       catch { request.resume(); sendError(response, 403, 'host_or_target_not_allowed'); return; }
       const body = await readBody(request);
       if (body === null) { sendError(response, 413, 'request_too_large'); return; }

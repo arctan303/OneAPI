@@ -1,5 +1,7 @@
 # OneAPI 部署说明
 
+> v0.2.0-dev.2 新增启动参数、可选配置向导、分区后台与居中登录页。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](NETWORK.md)。
+
 ## 当前主路径：轻量单服务器
 
 生产目标是一个 Node.js 24.x（至少 24.15） 进程、一个 bundle 发布包和一个业务 SQLite 文件。生产不依赖 Wrangler、Miniflare、workerd、Docker、Redis、D1 或 KV；运行时通过 `dist/server/oneapi.mjs` 启动，SQLite 的 WAL、SHM 和锁辅助文件按正常机制工作。本机真实账号迁移、模型/额度、两协议与日志验收已通过，证据见 [SERVER-001](verification/SERVER-001.md)。目标 Linux 服务器与真实 Access 策略仍需部署后验证。
@@ -25,7 +27,7 @@ npm start
 - `User=oneapi`
 - `ReadWritePaths=/var/lib/oneapi/data`
 
-Caddy 示例保留 Host、清理客户端 X-Forwarded-*、设置 HTTPS scheme，并使用 `flush_interval -1`。Node 只监听 loopback；完整模板和官方 Caddy 依据见 [deploy/README.md](../deploy/README.md)。
+Caddy 示例保留 Host、清理客户端 X-Forwarded-*、设置 HTTPS scheme，并使用 `flush_interval -1`。此同机反代模板中 Node 只监听 loopback；私网模式另见网络配置教程，完整模板和官方 Caddy 依据见 [deploy/README.md](../deploy/README.md)。
 
 ## 旧账号迁移
 

@@ -7,6 +7,7 @@ export interface HttpServerOptions {
   host?: string;
   port?: number;
   publicOrigin?: string;
+  lanOrigins?: string | string[];
 }
 
 export function startHttpServer(options: HttpServerOptions): Promise<{

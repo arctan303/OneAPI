@@ -1,4 +1,5 @@
 import { errorResponse, GatewayError } from "./errors";
+import { isLoopbackHost } from "../server/network-config.mjs";
 import type {
   AccessConfig,
   ApiKeyPolicy,
@@ -51,7 +52,13 @@ import { CLIENT_VERSION } from "./codex/constants";
 import { probeResponsesWebSocket } from "./codex/websocket-probe";
 import { normalizeChat, normalizeResponses, readJsonBody, type NormalizedRequest } from "./protocol/requests";
 import { chatEventStream, collectCompletedResponse, responseEventStream, responseToChat } from "./protocol/responses";
-import { LOCAL_REQUEST_GROUP_HEADER, type AccountServiceConfig, type AccountServiceOptions, type AccountStorage } from "./runtime/contracts";
+import {
+  LOCAL_REQUEST_GROUP_HEADER,
+  type AccountRequestContext,
+  type AccountServiceConfig,
+  type AccountServiceOptions,
+  type AccountStorage
+} from "./runtime/contracts";
 import {
   DEFAULT_KEY_POLICY,
   LEGACY_KEY_ID,
@@ -227,10 +234,10 @@ function captureStreamBody(stream: ReadableStream<Uint8Array>, capture: StreamBo
   });
 }
 
-function sessionCookie(value: string, requestUrl: string, maxAgeSeconds: number): string {
+function sessionCookie(value: string, requestUrl: string, maxAgeSeconds: number, trustedLanHttp = false): string {
   const url = new URL(requestUrl);
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1" || url.hostname === "[::1]";
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+  const loopback = isLoopbackHost(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && (loopback || trustedLanHttp))) {
     throw new GatewayError(403, "secure_session_required", "管理会话只允许 HTTPS，或本机 loopback HTTP。", undefined, "permission_error");
   }
   return [
@@ -486,7 +493,7 @@ export class AccountService {
     return Response.json({ enabled, teamDomain, applicationAud, updatedAt }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  private async createAdminSession(request: Request): Promise<Response> {
+  private async createAdminSession(request: Request, context: AccountRequestContext): Promise<Response> {
     const body = await readJsonBody(request);
     if (typeof body.password !== "string" || body.password.length > 1024 || Object.keys(body).some((key) => key !== "password")) {
       throw new GatewayError(400, "invalid_request", "登录只接受管理员口令。", "password");
@@ -523,12 +530,12 @@ export class AccountService {
     return Response.json({ authenticated: true, expiresAt }, {
       headers: {
         "Cache-Control": "no-store",
-        "Set-Cookie": sessionCookie(secret, request.url, Math.floor(ADMIN_SESSION_TTL_MS / 1000))
+        "Set-Cookie": sessionCookie(secret, request.url, Math.floor(ADMIN_SESSION_TTL_MS / 1000), context.trustedLanHttp === true)
       }
     });
   }
 
-  private async deleteAdminSession(request: Request, authentication: AdminAuthentication): Promise<Response> {
+  private async deleteAdminSession(request: Request, authentication: AdminAuthentication, context: AccountRequestContext): Promise<Response> {
     const body = await readJsonBody(request);
     if (Object.keys(body).length !== 0) {
       throw new GatewayError(400, "invalid_request", "退出后台不接受参数。", "body");
@@ -545,7 +552,7 @@ export class AccountService {
       status: 204,
       headers: {
         "Cache-Control": "no-store",
-        "Set-Cookie": sessionCookie("", request.url, 0),
+        "Set-Cookie": sessionCookie("", request.url, 0, context.trustedLanHttp === true),
         ...(authentication.kind === "access" ? { "X-OneAPI-Access-Logout": "/cdn-cgi/access/logout" } : {})
       }
     });
@@ -2061,7 +2068,7 @@ export class AccountService {
     this.requestGroups.clear();
     this.accessVerifier.clear();
   }
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, context: AccountRequestContext = {}): Promise<Response> {
     await this.ready;
     const requestId = crypto.randomUUID();
     const url = new URL(request.url);
@@ -2097,11 +2104,11 @@ export class AccountService {
       }
       let gatewayIdentity: GatewayIdentity | null = null;
       if (url.pathname.startsWith("/admin/")) {
-        if (request.method === "POST" && url.pathname === "/admin/session") return await this.createAdminSession(request);
+        if (request.method === "POST" && url.pathname === "/admin/session") return await this.createAdminSession(request, context);
         if (request.method === "GET" && url.pathname === "/admin/session") return await this.adminSessionStatus(request);
         adminAuthentication = await this.authenticateAdmin(request);
         if (request.method === "DELETE" && url.pathname === "/admin/session") {
-          return await this.deleteAdminSession(request, adminAuthentication);
+          return await this.deleteAdminSession(request, adminAuthentication, context);
         }
       } else if (url.pathname.startsWith("/v1/")) {
         gatewayIdentity = await this.authenticateGateway(request);

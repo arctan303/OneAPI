@@ -6,20 +6,29 @@ import { createServerRuntime } from '../src/runtime/node/runtime.ts';
 
 export { createServerRuntime, readServerConfig, startHttpServer };
 
-export async function main() {
-  const { host, port, databasePath, config } = readServerConfig();
+export async function main(argv = process.argv.slice(2)) {
+  const resolved = readServerConfig(process.env, process.cwd(), argv);
+  if (resolved.help) {
+    console.log(resolved.helpText);
+    return { help: true };
+  }
+  const { host, port, databasePath, config, accessUrls } = resolved;
   const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), 'public');
   const runtime = await createServerRuntime({ databasePath, publicDir, config });
   let http;
   try {
     await runtime.ready;
-    http = await startHttpServer({ runtime, host, port, publicOrigin: config.PUBLIC_ORIGIN });
+    http = await startHttpServer({
+      runtime, host, port, publicOrigin: config.PUBLIC_ORIGIN, lanOrigins: config.LAN_ORIGINS
+    });
   } catch (error) {
     await runtime.dispose();
     throw error;
   }
-  console.log(JSON.stringify({ event: 'oneapi_ready', runtime: 'node', listen: http.url.origin,
-    ...(config.PUBLIC_ORIGIN ? { publicOrigin: config.PUBLIC_ORIGIN } : {}) }));
+  console.log(JSON.stringify({
+    event: 'oneapi_ready', runtime: 'node', listen: http.url.origin, accessUrls,
+    ...(config.PUBLIC_ORIGIN ? { publicOrigin: config.PUBLIC_ORIGIN } : {})
+  }));
   let stopping = false;
   const shutdown = async () => {
     if (stopping) return;

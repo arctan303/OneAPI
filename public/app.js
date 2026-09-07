@@ -15,6 +15,47 @@ let accessAvailabilityToken = 0;
 let accessConfigRequestToken = 0;
 let accessSaveToken = 0;
 
+const ROUTES = ["overview", "account", "playground", "keys", "logs", "settings"];
+let activeRoute = null;
+function routeFromHash() {
+  try {
+    const route = decodeURIComponent(location.hash.slice(1));
+    return ROUTES.includes(route) ? route : null;
+  } catch {
+    return null;
+  }
+}
+function renderRoute({ focus = true } = {}) {
+  let route = routeFromHash();
+  if (!route) {
+    route = "overview";
+    history.replaceState(null, "", "#overview");
+  }
+  document.querySelectorAll("[data-route-page]").forEach((page) => {
+    page.classList.toggle("hidden", page.dataset.routePage !== route);
+  });
+  document.querySelectorAll("[data-route-link]").forEach((link) => {
+    if (link.dataset.routeLink === route) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  const routeChanged = activeRoute !== route;
+  activeRoute = route;
+  const authenticated = !$("console").classList.contains("hidden");
+  if (routeChanged && route === "logs" && authenticated) void loadLogs();
+  if (focus && authenticated) {
+    const heading = document.querySelector(`[data-route-page="${route}"] h1`);
+    requestAnimationFrame(() => heading?.focus());
+  }
+}
+function navigateTo(route) {
+  if (routeFromHash() === route) renderRoute();
+  else location.hash = route;
+}
+function setStreamRouteStatus(running) {
+  $("stream-route-status").classList.toggle("hidden", !running);
+}
+window.addEventListener("hashchange", () => renderRoute());
+
 function setMessage(id, text) { $(id).textContent = text; }
 function setBadge(id, text) { $(id).textContent = text; }
 function value(id) { return $(id).value.trim(); }
@@ -54,8 +95,10 @@ function showAuthenticated(expiresAt, session = {}) {
   uiEpoch += 1;
   sessionProvider = session.provider || "session";
   sessionLogoutUrl = safeLogoutPath(session.logoutUrl);
+  $("login-view").classList.add("hidden");
   $("login-panel").classList.add("hidden");
   $("console").classList.remove("hidden");
+  renderRoute({ focus: false });
   $("session-expiry").textContent = sessionProvider === "access"
     ? "已通过 Cloudflare Access 验证"
     : expiresAt
@@ -76,18 +119,32 @@ function showLogin(message = "") {
   requestController?.abort();
   requestController = null;
   conversation = [];
+  setStreamRouteStatus(false);
   $("transcript").textContent = "";
   $("prompt").value = "";
   $("created-key").textContent = "";
   $("created-key-panel").classList.add("hidden");
   $("api-key-list").replaceChildren();
+  $("api-key-form").reset();
+  $("key-allowlist-wrap").classList.add("hidden");
+  $("base-url-message").textContent = "";
   clearAccountOverview();
   clearModels();
   $("logs-list").replaceChildren();
   $("log-detail-meta").replaceChildren();
   $("log-detail-bodies").replaceChildren();
   $("log-detail").classList.add("hidden");
-  $("logs-section").classList.add("hidden");
+  ["logs-key-id", "logs-model", "logs-status", "logs-from", "logs-to"].forEach((id) => { $(id).value = ""; });
+  $("logs-key-label").textContent = "全部 key";
+  logKeyId = null;
+  logCursor = null;
+  logNextCursor = null;
+  logCursorStack = [];
+  logPage = 1;
+  $("logs-page-label").textContent = "第 1 页";
+  $("logs-prev").disabled = true;
+  $("logs-next").disabled = true;
+  $("key-edit-form").reset();
   if ($("key-edit-dialog").open) $("key-edit-dialog").close();
   clearAccessConfig();
   $("device-panel").classList.add("hidden");
@@ -95,10 +152,19 @@ function showLogin(message = "") {
   $("verification-link").textContent = "";
   $("user-code").textContent = "";
   $("device-login-status").textContent = "";
+  setBadge("account-badge", "未检查");
+  setBadge("call-badge", "尚未测试");
+  setMessage("account-message", "");
+  setMessage("api-key-message", "");
+  setMessage("logs-message", "");
+  setMessage("session-message", "");
   $("stop-button").disabled = true;
   $("send-button").disabled = false;
   $("console").classList.add("hidden");
+  $("login-view").classList.remove("hidden");
   $("login-panel").classList.remove("hidden");
+  history.replaceState(null, "", "#overview");
+  renderRoute({ focus: false });
   $("admin-password").value = "";
   $("save-access-button").disabled = false;
   setAccessLoginVisible(false);
@@ -294,6 +360,7 @@ async function sendTest() {
   $("transcript").textContent += `\n你：${prompt}\n助手：`;
   $("prompt").value = "";
   requestController = new AbortController();
+  setStreamRouteStatus(true);
   $("stop-button").disabled = false;
   $("send-button").disabled = true;
   let answer = "";
@@ -346,6 +413,7 @@ async function sendTest() {
   } finally {
     if (epoch !== uiEpoch) return;
     requestController = null;
+    setStreamRouteStatus(false);
     $("stop-button").disabled = true;
     $("send-button").disabled = false;
   }
@@ -631,8 +699,8 @@ async function saveKeyEditor() {
   catch (error) { $("key-edit-message").textContent = error.message; }
 }
 let editKeyIsLegacy = false; let logKeyId = null, logCursor = null, logNextCursor = null, logCursorStack = [], logPage = 1;
-function openLogs(key) { logKeyId = key.id; $("logs-key-id").value = key.id; $("logs-key-label").textContent = `${key.name || "key"} · ${key.masked || key.id}`; $("logs-section").classList.remove("hidden"); $("logs-section").scrollIntoView({ behavior: "smooth", block: "start" }); logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; loadLogs(); }
-function closeLogs() { logListRequestToken += 1; logDetailRequestToken += 1; $("logs-section").classList.add("hidden"); $("log-detail").classList.add("hidden"); }
+function openLogs(key) { const alreadyInLogs = routeFromHash() === "logs"; logKeyId = key.id; $("logs-key-id").value = key.id; $("logs-key-label").textContent = `${key.name || "key"} · ${key.masked || key.id}`; logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; navigateTo("logs"); if (alreadyInLogs) loadLogs(); }
+function closeLogs() { logListRequestToken += 1; logDetailRequestToken += 1; $("log-detail").classList.add("hidden"); navigateTo("keys"); }
 
 function logValue(obj, ...names) { for (const n of names) if (obj?.[n] != null) return obj[n]; return null; }
 function bodyIsExpired(log) { return log?.bodyExpired === true || (log?.bodyExpired === undefined && log?.bodyExpiresAt != null && log.bodyExpiresAt <= Date.now()); }
@@ -826,4 +894,4 @@ $("logs-filter-button").addEventListener("click", () => { logCursor = null; logN
 $("logs-close-button").addEventListener("click", closeLogs); $("logs-next").addEventListener("click", () => { if (!logNextCursor) return; logCursorStack.push(logCursor); logCursor = logNextCursor; logPage += 1; loadLogs(); }); $("logs-prev").addEventListener("click", () => { if (!logCursorStack.length) return; logCursor = logCursorStack.pop(); logPage = Math.max(1, logPage - 1); loadLogs(); }); $("save-log-settings-button").addEventListener("click", saveLogSettings);
 
 
-$("all-logs-button").addEventListener("click", () => { logKeyId = null; $("logs-key-id").value = ""; $("logs-key-label").textContent = "全部 key"; $("logs-section").classList.remove("hidden"); logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; loadLogs(); $("logs-section").scrollIntoView({ behavior: "smooth", block: "start" }); });
+$("all-logs-button").addEventListener("click", () => { const alreadyInLogs = routeFromHash() === "logs"; logKeyId = null; $("logs-key-id").value = ""; $("logs-key-label").textContent = "全部 key"; logCursor = null; logNextCursor = null; logCursorStack = []; logPage = 1; navigateTo("logs"); if (alreadyInLogs) loadLogs(); });

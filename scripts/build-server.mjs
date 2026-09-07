@@ -10,7 +10,7 @@ if (!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(version)) throw new Error('Invalid 
 const out = resolve(root, 'dist/server');
 await mkdir(join(out, 'public'), { recursive: true });
 const result = await build({
-  absWorkingDir: root, entryPoints: { oneapi: 'server/main.mjs', migrate: 'scripts/migrate-server.mjs' }, outdir: out, outExtension: { '.js': '.mjs' },
+  absWorkingDir: root, entryPoints: { oneapi: 'server/main.mjs', migrate: 'scripts/migrate-server.mjs', configure: 'scripts/configure-server.mjs' }, outdir: out, outExtension: { '.js': '.mjs' },
   bundle: true, format: 'esm', platform: 'node', target: 'node24', metafile: true,
   sourcemap: false, logLevel: 'warning',
 });
@@ -22,13 +22,18 @@ if (Object.keys(result.metafile.inputs).some(name => /node_modules\/(?:miniflare
 const copies = [
   ['public/index.html', 'public/index.html'], ['public/app.js', 'public/app.js'], ['public/styles.css', 'public/styles.css'],
   ['scripts/setup-server.mjs', 'setup.mjs'], ['.env.example', '.env.example'],
-  ['docs/INSTALL.md', 'INSTALL.md'],
+  ['docs/INSTALL.md', 'INSTALL.md'], ['docs/NETWORK.md', 'NETWORK.md'],
   ['deploy/README.md', 'README.md'], ['deploy/oneapi.service', 'oneapi.service'], ['deploy/Caddyfile.example', 'Caddyfile.example'],
 ];
-for (const [source, destination] of copies) await copyFile(join(root, source), join(out, destination));
+for (const [source, destination] of copies) {
+  if (source === 'deploy/README.md') {
+    const contents = await readFile(join(root, source), 'utf8');
+    await writeFile(join(out, destination), contents.replaceAll('(../docs/NETWORK.md)', '(NETWORK.md)'));
+  } else await copyFile(join(root, source), join(out, destination));
+}
 await writeFile(join(out, 'package.json'), JSON.stringify({ name: 'oneapi-server', version, private: true,
-  type: 'module', engines: { node: '>=24.15.0 <25' }, scripts: { start: 'node --env-file-if-exists=.env oneapi.mjs', setup: 'node setup.mjs' } }, null, 2) + '\n');
-const files = ['oneapi.mjs', 'migrate.mjs', 'package.json', ...copies.map(([, destination]) => destination)];
+  type: 'module', engines: { node: '>=24.15.0 <25' }, scripts: { start: 'node --env-file-if-exists=.env oneapi.mjs', setup: 'node setup.mjs', configure: 'node configure.mjs' } }, null, 2) + '\n');
+const files = ['oneapi.mjs', 'migrate.mjs', 'configure.mjs', 'package.json', ...copies.map(([, destination]) => destination)];
 const manifest = [];
 for (const file of files) {
   const bytes = await readFile(join(out, file));

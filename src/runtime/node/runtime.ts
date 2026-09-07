@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AccountService } from "../../account-core";
 import { configuredOrigin, handleGatewayRequest } from "../../gateway";
+import { parseLanOrigins } from "../../../server/network-config.mjs";
 import type { GatewayRequestContext } from "../contracts";
 import { createDirectOutbound, type NodeFetch } from "./outbound";
 import { SqliteAccountStorage } from "./sqlite-storage";
@@ -14,6 +15,7 @@ export interface ServerRuntimeConfig {
   GATEWAY_API_KEY: string;
   TOKEN_ENCRYPTION_KEY: string;
   PUBLIC_ORIGIN?: string;
+  LAN_ORIGINS?: string;
 }
 
 export interface ServerRuntimeOptions {
@@ -31,7 +33,7 @@ export interface ServerRuntime {
 }
 
 function validateConfig(config: ServerRuntimeConfig): void {
-  const allowed = new Set(["ADMIN_API_KEY", "GATEWAY_API_KEY", "TOKEN_ENCRYPTION_KEY", "PUBLIC_ORIGIN"]);
+  const allowed = new Set(["ADMIN_API_KEY", "GATEWAY_API_KEY", "TOKEN_ENCRYPTION_KEY", "PUBLIC_ORIGIN", "LAN_ORIGINS"]);
   if (Object.keys(config).some((key) => !allowed.has(key))) throw new Error("Unsupported server runtime configuration");
   for (const key of ["ADMIN_API_KEY", "GATEWAY_API_KEY"] as const) {
     const value = config[key];
@@ -49,6 +51,7 @@ function validateConfig(config: ServerRuntimeConfig): void {
   if (config.PUBLIC_ORIGIN !== undefined && configuredOrigin(config.PUBLIC_ORIGIN, "PUBLIC_ORIGIN") === null) {
     throw new Error("PUBLIC_ORIGIN must be an exact HTTPS origin");
   }
+  parseLanOrigins(config.LAN_ORIGINS);
 }
 
 export async function createServerRuntime(options: ServerRuntimeOptions): Promise<ServerRuntime> {
@@ -102,7 +105,7 @@ export async function createServerRuntime(options: ServerRuntimeOptions): Promis
       await ready;
       if (disposed) return Response.json({ error: { code: "runtime_disposed", type: "server_error", message: "Runtime is disposed" } }, { status: 503 });
       return handleGatewayRequest(request, options.config, {
-        accountFetch: (forwarded) => account.fetch(forwarded),
+        accountFetch: (forwarded, accountContext) => account.fetch(forwarded, accountContext),
         staticFetch: (forwarded) => staticHandler(forwarded),
         cancelLease: async (leaseId) => {
           await account.fetch(new Request(`https://oneapi.internal/__internal/cancel?lease_id=${encodeURIComponent(leaseId)}`, {

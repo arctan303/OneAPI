@@ -1,26 +1,13 @@
 import { errorResponse, GatewayError } from "./errors";
 import { ADMIN_SESSION_COOKIE, timingSafeEqual } from "./security";
 import type { GatewayConfig, GatewayHandlers, GatewayRequestContext } from "./runtime/contracts";
+import { isLoopbackAddress, isLoopbackHost, isTrustedLanPeer, parseLanOrigins } from "../server/network-config.mjs";
 
 const LOCAL_REQUEST_GROUP_HEADER = "X-OneAPI-Local-Request-Group";
 const LOCAL_BRIDGE_TOKEN_HEADER = "X-OneAPI-Local-Bridge-Token";
 const INTERNAL_CONTROL_ORIGIN = "https://oneapi.internal";
 const INTERNAL_GROUP_PATH = /^\/__internal\/request-groups\/(open|cancel|close)$/;
 
-function isLoopback(hostname: string): boolean {
-  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
-}
-
-function isLoopbackAddress(value: string | undefined): boolean {
-  if (!value) return false;
-  const address = value.toLowerCase().split("%", 1)[0] ?? "";
-  if (address === "::1") return true;
-  const v4 = address.startsWith("::ffff:") ? address.slice(7) : address;
-  const octets = v4.split(".");
-  return octets.length === 4
-    && octets.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
-    && octets[0] === "127";
-}
 
 export function configuredOrigin(value: string | undefined, label: string): string | null {
   if (!value) return null;
@@ -43,16 +30,23 @@ export function configuredOrigin(value: string | undefined, label: string): stri
   return parsed.origin;
 }
 
-function hostAllowed(
+function requestAccess(
   url: URL,
   env: GatewayConfig,
   context: GatewayRequestContext,
   allowLoopbackWithoutPeer: boolean
-): boolean {
-  if (isLoopback(url.hostname)) return allowLoopbackWithoutPeer || isLoopbackAddress(context.remoteAddress);
+): { allowed: boolean; trustedLanHttp: boolean } {
+  if (isLoopbackHost(url.hostname)) {
+    return { allowed: allowLoopbackWithoutPeer || isLoopbackAddress(context.remoteAddress), trustedLanHttp: false };
+  }
   const publicOrigin = configuredOrigin(env.PUBLIC_ORIGIN, "PUBLIC_ORIGIN");
   const workerOrigin = configuredOrigin(env.WORKER_ORIGIN, "WORKER_ORIGIN");
-  return url.protocol === "https:" && (url.origin === publicOrigin || url.origin === workerOrigin);
+  if (url.protocol === "https:" && (url.origin === publicOrigin || url.origin === workerOrigin)) {
+    return { allowed: true, trustedLanHttp: false };
+  }
+  const lanOrigins = parseLanOrigins(env.LAN_ORIGINS);
+  const trustedLan = lanOrigins.includes(url.origin) && isTrustedLanPeer(context.remoteAddress);
+  return { allowed: trustedLan, trustedLanHttp: trustedLan && url.protocol === "http:" };
 }
 
 function sameOrigin(value: string, expected: string): boolean {
@@ -151,8 +145,9 @@ export async function handleGatewayRequest(
       if (internalGroupControl) {
         response = secureHeaders(await handlers.accountFetch(request), true);
       } else {
-        if (env.ALLOW_TEST_HOSTS !== "true" && !hostAllowed(url, env, context, handlers.allowLoopbackWithoutPeer === true)) {
-          throw new GatewayError(403, "host_not_allowed", "请求 Host 未列入允许的公开 HTTPS origin。", undefined, "permission_error");
+        const access = requestAccess(url, env, context, handlers.allowLoopbackWithoutPeer === true);
+        if (env.ALLOW_TEST_HOSTS !== "true" && !access.allowed) {
+          throw new GatewayError(403, "host_not_allowed", "请求 Host 未列入允许的 origin。", undefined, "permission_error");
         }
         const protectedRoute = url.pathname.startsWith("/admin/") || url.pathname.startsWith("/v1/") || url.pathname === "/access/status";
         if (url.pathname.startsWith("/admin/")) {
@@ -166,7 +161,10 @@ export async function handleGatewayRequest(
             ...(env.MOCK_UPSTREAM === "true" && env.MOCK_INSTANCE_NONCE ? { instanceNonce: env.MOCK_INSTANCE_NONCE } : {})
           });
         } else if (protectedRoute) {
-          response = bridgeStreamCancellation(await handlers.accountFetch(forwardedRequest), handlers.cancelLease);
+          response = bridgeStreamCancellation(
+            await handlers.accountFetch(forwardedRequest, { trustedLanHttp: access.trustedLanHttp }),
+            handlers.cancelLease
+          );
         } else {
           response = await handlers.staticFetch(forwardedRequest);
         }

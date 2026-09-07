@@ -1,4 +1,6 @@
-# OneAPI v0.2.0-dev.1 首次安装
+# OneAPI v0.2.0-dev.2 首次安装
+
+> v0.2.0-dev.2 新增启动参数、可选配置向导、分区后台与居中登录页。网络配置与 Tunnel / 公网 HTTPS / 反代安装见 [网络配置教程](NETWORK.md)。
 
 本教程适用于从 GitHub 预发布包首次安装 OneAPI 的用户。当前预发布版的生产上游验证仍有限；模型目录以官方当前返回为准，若官方未返回 5 小时额度窗口则显示未知，不应把未知解释为安装失败。
 
@@ -14,13 +16,13 @@ node --version
 
 ## 2. 下载并解压预发布包
 
-这是 private 仓库。请先在浏览器登录拥有仓库读取权限的 GitHub 账户，再从固定的 [v0.2.0-dev.1 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1) 页面下载对应的 tar.gz 和 `.sha256` 资产。
+这是 private 仓库。请先在浏览器登录拥有仓库读取权限的 GitHub 账户，再从固定的 [v0.2.0-dev.2 Release](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.2) 页面下载对应的 tar.gz 和 `.sha256` 资产。
 
 有权限的 GitHub CLI 用户也可以运行：
 
 ```sh
 gh auth login
-gh release download v0.2.0-dev.1 --repo arctan303/OneAPI --pattern 'oneapi-server-0.2.0-dev.1.tar.gz*'
+gh release download v0.2.0-dev.2 --repo arctan303/OneAPI --pattern 'oneapi-server-0.2.0-dev.2.tar.gz*'
 ```
 
 如果账户没有该 private 仓库的读取权限，请联系仓库所有者转发 tar.gz 和对应 `.sha256` 文件。下载后先校验归档：
@@ -28,37 +30,37 @@ gh release download v0.2.0-dev.1 --repo arctan303/OneAPI --pattern 'oneapi-serve
 Linux：
 
 ```sh
-sha256sum -c oneapi-server-0.2.0-dev.1.tar.gz.sha256
+sha256sum -c oneapi-server-0.2.0-dev.2.tar.gz.sha256
 ```
 
 macOS：
 
 ```sh
-shasum -a 256 -c oneapi-server-0.2.0-dev.1.tar.gz.sha256
+shasum -a 256 -c oneapi-server-0.2.0-dev.2.tar.gz.sha256
 ```
 
 Windows PowerShell：
 
 ```powershell
-(Get-FileHash .\oneapi-server-0.2.0-dev.1.tar.gz -Algorithm SHA256).Hash
-Get-Content .\oneapi-server-0.2.0-dev.1.tar.gz.sha256
+(Get-FileHash .\oneapi-server-0.2.0-dev.2.tar.gz -Algorithm SHA256).Hash
+Get-Content .\oneapi-server-0.2.0-dev.2.tar.gz.sha256
 ```
 
 确认两个 SHA-256 值一致后再解压。Linux：
 
 ```sh
-tar -xzf oneapi-server-0.2.0-dev.1.tar.gz
+tar -xzf oneapi-server-0.2.0-dev.2.tar.gz
 cd server
 ```
 
 Windows PowerShell：
 
 ```powershell
-tar -xzf oneapi-server-0.2.0-dev.1.tar.gz
+tar -xzf oneapi-server-0.2.0-dev.2.tar.gz
 Set-Location server
 ```
 
-解压后的 `server/` 目录应包含 `oneapi.mjs`、`migrate.mjs`、`setup.mjs`、`.env.example`、`public/` 和包内 README。不要把 `.env`、SQLite 文件或日志放进发布归档。
+解压后的 `server/` 目录应包含 `oneapi.mjs`、`migrate.mjs`、`configure.mjs`、`setup.mjs`、`NETWORK.md`、`.env.example`、`public/` 和包内 README。不要把 `.env`、SQLite 文件或日志放进发布归档。
 ## 3. 生成并编辑环境文件
 
 在 `server/` 目录运行：
@@ -79,12 +81,22 @@ node --env-file=.env oneapi.mjs
 
 本机浏览器打开 [http://localhost:8787/](http://localhost:8787/)，用 `.env` 中的 `ADMIN_API_KEY` 登录。首次使用时：
 
-1. 在后台点击连接 Codex，按页面提示完成官方设备码授权。
-2. 加载模型目录，选择要测试的模型和思考程度。
+1. 打开“账号连接”页面，点击连接 Codex，按页面提示完成官方设备码授权。
+2. 打开“模型测试”页面，加载模型目录，选择要测试的模型和思考程度。
 3. 在 API key 页面创建供客户端使用的 key，不要把管理员 key 交给第三方。
 4. 本地 API Base URL 使用 `http://localhost:8787/v1`；正式 HTTPS 反代则使用你的公网 HTTPS origin 加 `/v1`。
 
 预发布验证覆盖有限；模型目录以官方当前返回为准，若官方未返回 5 小时额度窗口则显示未知。遇到目录或额度异常时保留 HTTP 状态和应用错误码，先不要循环发送生成请求。
+
+### 更换监听地址和端口
+
+停止旧进程后，可直接用启动参数运行，参数仅影响本次进程：
+
+```sh
+node --env-file=.env oneapi.mjs --host 0.0.0.0 --port 9090 --lan
+```
+
+启动日志会列出当前主机可访问的私网地址。要保存默认值，运行 `node configure.mjs`，完成后手动重启服务。公网 HTTPS、Cloudflare Tunnel 与反代均支持，具体配置见随包的 [网络教程](NETWORK.md)。
 
 ## 5. 远程 SSH 访问
 
@@ -98,7 +110,7 @@ ssh -N -L 8787:127.0.0.1:8787 user@server
 
 ## 6. 正式 HTTPS
 
-正式公网使用 Caddy 终止 TLS、Node loopback 监听，并由 systemd 以无特权用户运行。完整的 release 目录、环境文件、Linux 用户、Caddy、Cloudflare Access 和回滚说明见仓库固定版本的 [部署文档](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.1/docs/DEPLOYMENT.md) 和 [部署模板](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.1/deploy/README.md)。本教程不代替目标主机管理员实际部署检查。
+正式公网使用 Caddy 终止 TLS、Node loopback 监听，并由 systemd 以无特权用户运行。完整的 release 目录、环境文件、Linux 用户、Caddy、Cloudflare Access 和回滚说明见仓库固定版本的 [部署文档](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.2/docs/DEPLOYMENT.md) 和 [部署模板](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.2/deploy/README.md)。本教程不代替目标主机管理员实际部署检查。
 
 Access 只保护管理页面和 `/admin/*`。不要给 `/v1` 设置交互式登录跳转；若 Cloudflare 门禁在边缘拦截，必须先在 Cloudflare 控制台关闭或收窄门禁，请求才会到达 OneAPI。
 
@@ -114,7 +126,7 @@ node --env-file=.dev.vars dist/server/migrate.mjs \
   --target data/oneapi.sqlite
 ```
 
-迁移源库只读且不修改，目标必须不存在；旧 Worker 实验状态保留。迁移完成后把原三个 secret 安全安装到新服务器环境文件，再启动新版本。详细边界和回滚路径见上述 [部署文档](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.1/docs/DEPLOYMENT.md)。
+迁移源库只读且不修改，目标必须不存在；旧 Worker 实验状态保留。迁移完成后把原三个 secret 安全安装到新服务器环境文件，再启动新版本。详细边界和回滚路径见上述 [部署文档](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.2/docs/DEPLOYMENT.md)。
 
 ## 常见错误
 
@@ -126,4 +138,4 @@ node --env-file=.dev.vars dist/server/migrate.mjs \
 - 模型目录或额度为空：以官方当前目录为准；官方未返回 5 小时额度窗口时显示未知。保存一次脱敏状态和错误码，按当前验证计划处理。
 - 迁移报告目标已存在或旧 runtime 活跃：停止旧进程，确认目标没有可保留数据后再选择新的空目标；迁移工具不会覆盖目标或修改源库。
 
-历史 Worker 命令、上游 403/出站诊断和归档链接保留在 [部署文档的历史章节](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.1/docs/DEPLOYMENT.md)。
+历史 Worker 命令、上游 403/出站诊断和归档链接保留在 [部署文档的历史章节](https://github.com/arctan303/OneAPI/blob/v0.2.0-dev.2/docs/DEPLOYMENT.md)。

@@ -1,6 +1,6 @@
 {
   "name": "oneapi",
-  "version": "0.2.0-dev.1",
+  "version": "0.2.0-dev.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -30,7 +30,9 @@
     "test:server": "vitest run --config vitest.node.config.ts",
     "test:server:fixtures": "node --test scripts/test-server-http.mjs scripts/test-migrate-server.mjs scripts/test-server-artifact.mjs scripts/test-cleanup-deadline.mjs",
     "package:server": "node scripts/package-server.mjs",
-    "test:release": "node --test scripts/test-release-install.mjs"
+    "test:release": "node --test scripts/test-release-install.mjs",
+    "configure:server": "node scripts/configure-server.mjs",
+    "test:server:configure": "node --test scripts/test-configure-server.mjs"
   },
   "dependencies": {
     "openai": "7.10.0"

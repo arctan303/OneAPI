@@ -4,9 +4,11 @@
 
 ## 活跃计划
 
+当前执行：[CONSOLE-NET-001](tasks/CONSOLE-NET-001.md)，命令行网络配置向导、显式私网访问和六区管理后台；本地实施、浏览器验收与网络边界独立复核均已完成，新版已在127.0.0.1:8787启动。用户已授权发布 v0.2.0-dev.2，正在执行 [RELEASE-003](verification/RELEASE-003.md) 的打包、推送和回读。
+
 最新发布：[v0.2.0-dev.1](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.1) 开发版已推送并发布；安装包回下载哈希核对通过，新用户教程随包提供。发布证据见 [RELEASE-002](verification/RELEASE-002.md)。
 
-最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。当前本地8787运行，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
+最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。本地8787现运行 CONSOLE-NET-001 新版，账号配置与数据库保留，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
 
 历史交付顺序：[Phase-01](dev-plan/phase-01.md) → [Phase-02](dev-plan/phase-02.md)。Phase-01 本地实现、真实两协议/思考程度/官方额度与页面验收、fresh R2 独立复核均已完成；Phase-02已部署且管理端真实验证通过；用户新云端登录后模型目录/额度仍403，端到端验收受阻，见阶段文档。本轮用户已允许后续隔离Cloudflare测试，但不得影响已有资源；替代下文历史阶段仅本地的授权限制。范围与默认值见 [EXPLORE-001](tasks/EXPLORE-001.md)。
 
