@@ -4,9 +4,9 @@
 
 ## 发布准备状态
 
-状态：候选产物已构建并通过安装冒烟，fresh R2 reviewer 最终通过；真实 GitHub 发布与附件回读待补。
+状态：已提交、推送并发布 GitHub prerelease；fresh R2 reviewer、附件回下载哈希和远端状态回读均通过。
 
-版本来源：package.json 与 package-lock.json 为 0.2.0-dev.4。候选产物：
+版本来源：package.json 与 package-lock.json 为 0.2.0-dev.4。发布产物：
 - `dist/oneapi-server-0.2.0-dev.4.tar.gz`
 - `dist/oneapi-server-0.2.0-dev.4.tar.gz.sha256`
 - 归档 113686 bytes，15 files，SHA-256 `a152eb9b7ae25a68bdbe4876264c0bf24d8498c9e69f0968377e164ad6496cce`
@@ -42,9 +42,20 @@ SDK 并发测试最初稳定复现首 SSE 事件晚于 Mock 专用 100ms 生成�
 
 ## 隐私和敏感信息审计
 
-打包器从本机配置仅内存读取 9 个 secret 值并与 15 个产物逐字节比对，configuredSecretMatches=0；不输出真实值。个人 `.codex/evolution/signals.md` 已从尚未推送的前端提交中移除，工作区原内容哈希保持不变且不纳入候选。最终源码 index 审计覆盖 219 files、1558247 bytes，并把 9 个本机配置值仅在内存中逐字节对照，0 findings；通用疑似 secret 初筛无结果。最终附件回下载检查待 GitHub 草稿上传后完成。
+打包器从本机配置仅内存读取 9 个 secret 值并与 15 个产物逐字节比对，configuredSecretMatches=0；不输出真实值。个人 `.codex/evolution/signals.md` 已从前端发布提交中移除，工作区原内容哈希保持不变且不纳入候选。最终源码 index 审计覆盖 219 files、1558247 bytes，并把 9 个本机配置值仅在内存中逐字节对照，0 findings；通用疑似 secret 初筛无结果。GitHub 草稿附件回下载后，本地归档、下载归档与下载的 `.sha256` 三方哈希一致。
 
 发布涉及真实账号模型目录、额度和精简调用日志，但不提交账号标识、正文、截图、数据库或环境文件。原始 Codex 模型能力字段会向通过该 key 权限过滤的调用者返回；白名单 client_metadata/header 会转给固定 OpenAI Codex 上游，客户端认证头与未知值不转发。
+
+## GitHub 发布回读
+
+2026-09-08T02:05:20Z 发布 [v0.2.0-dev.4](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.4)：`isDraft=false`、`isPrerelease=true`。远端 `main` 与 annotated tag 剥离后的提交均为 `e79723f7b92bb125d5ee079025d4a1012091e86b`；tag 对象为 `4aef5c73be92f296586ece3161e6258f814c1cba`。
+
+草稿阶段上传并回下载两份附件：
+
+- `oneapi-server-0.2.0-dev.4.tar.gz`：113686 bytes；GitHub digest 与三方实算均为 SHA-256 `a152eb9b7ae25a68bdbe4876264c0bf24d8498c9e69f0968377e164ad6496cce`
+- `oneapi-server-0.2.0-dev.4.tar.gz.sha256`：99 bytes；内容指向同一归档哈希
+
+回下载核对通过后才解除草稿。dev.3 标签与附件未修改；本次未部署远端 Node、Worker 或 Access。
 
 ## 回滚与恢复
 

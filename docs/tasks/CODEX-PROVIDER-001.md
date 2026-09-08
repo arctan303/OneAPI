@@ -32,4 +32,4 @@
 5. fresh reviewer 对元数据转发、未知字段降级、目录隔离、日志隐私和回归证据给出结论。
 6. 通过后随现有前端提交打包为 `v0.2.0-dev.4` prerelease；提交、tag、GitHub Release 与附件回下载校验留证，远端生产不自动更新。
 
-状态：实施、自动化/真实 Codex/浏览器/候选安装包验证和 fresh R2 reviewer 均已完成并通过；未发布。
+状态：实施、自动化/真实 Codex/浏览器/安装包验证和 fresh R2 reviewer 均已完成并通过；已随 [v0.2.0-dev.4](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.4) 发布，附件回下载哈希一致。

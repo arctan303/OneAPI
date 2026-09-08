@@ -4,13 +4,13 @@
 
 ## 活跃计划
 
-当前新增批次：CODEX-PROVIDER-001 已完成协议实现、真实 Codex 0.153.4 文本/只读工具续轮、未知字段真实请求、SDK/Worker/Node/浏览器与候选归档验证；既有分区后台和额度/key/日志优化合并进入 v0.2.0-dev.4。R2 元数据转发与完整候选 diff 已通过 fresh reviewer；下一步按用户已授权范围提交、推送并发布 GitHub prerelease，远端 Node/Worker 不自动更新。
+当前新增批次：CODEX-PROVIDER-001 已完成协议实现、真实 Codex 0.153.4 文本/只读工具续轮、未知字段真实请求、SDK/Worker/Node/浏览器/归档验证与 fresh R2 reviewer；既有分区后台和额度/key/日志优化已合并进入 v0.2.0-dev.4。提交、annotated tag、GitHub prerelease、附件回下载哈希及远端状态回读均已完成，远端 Node/Worker 未自动更新。
 
 此前完成：[CONSOLE-NET-001](tasks/CONSOLE-NET-001.md)，命令行网络配置向导、显式私网访问和六区管理后台；本地实施、浏览器验收与网络边界独立复核均已完成，新版已在127.0.0.1:8787启动。已随 v0.2.0-dev.2 测试版推送发布，安装包回下载核对通过，见 [RELEASE-003](verification/RELEASE-003.md)。
 
-最新发布：[v0.2.0-dev.3](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.3) 开发版已推送并发布；安装包与校验和回下载一致，安装和网络教程随包提供。发布证据见 [RELEASE-004](verification/RELEASE-004.md)；上一版记录保留在 [RELEASE-003](verification/RELEASE-003.md)。
+最新发布：[v0.2.0-dev.4](https://github.com/arctan303/OneAPI/releases/tag/v0.2.0-dev.4) 开发版已推送并发布；安装包、校验文件和 GitHub 回下载三方哈希一致。发布证据见 [RELEASE-005](verification/RELEASE-005.md)，独立审查见 [RELEASE-005-review](verification/RELEASE-005-review.md)；dev.3 记录保留在 [RELEASE-004](verification/RELEASE-004.md)。
 
-最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。本地8787现运行 v0.2.0-dev.3，账号配置与数据库保留，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
+最新完成：[Phase-03轻量单服务器转型](dev-plan/phase-03.md)，有界参考项目研究、本地实现/独立复核/账号迁移/真实两协议验收与发布包均已完成。本地8787现运行 v0.2.0-dev.4，账号配置与数据库保留，未执行新远端服务器部署。用户DEC-014已替代单Worker主交付方向；Phase-02和MARKER/WS失败证据保留，现有云端不自动改动。
 
 历史交付顺序：[Phase-01](dev-plan/phase-01.md) → [Phase-02](dev-plan/phase-02.md)。Phase-01 本地实现、真实两协议/思考程度/官方额度与页面验收、fresh R2 独立复核均已完成；Phase-02已部署且管理端真实验证通过；用户新云端登录后模型目录/额度仍403，端到端验收受阻，见阶段文档。本轮用户已允许后续隔离Cloudflare测试，但不得影响已有资源；替代下文历史阶段仅本地的授权限制。范围与默认值见 [EXPLORE-001](tasks/EXPLORE-001.md)。
 

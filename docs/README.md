@@ -1,6 +1,6 @@
 # OneAPI 使用说明
 
-更新时间：2026-09-08。当前产品主路径是轻量单服务器：Node.js 24.x（至少 24.15）、一个生产 bundle、一个 Node 进程和一个业务 SQLite 文件。dev.4 候选已在本机用真实账号跑通 Codex 0.153.4 模型目录、文本、只读工具续轮与未知字段兼容，并完成桌面/390px 后台验收；fresh R2 审查和 GitHub 发布状态见 [RELEASE-005](verification/RELEASE-005.md)。用户已有远端 Node 安装，本次不会自动升级或部署。
+更新时间：2026-09-08。当前产品主路径是轻量单服务器：Node.js 24.x（至少 24.15）、一个生产 bundle、一个 Node 进程和一个业务 SQLite 文件。dev.4 已在本机用真实账号跑通 Codex 0.153.4 模型目录、文本、只读工具续轮与未知字段兼容，并完成桌面/390px 后台验收、fresh R2 审查和 GitHub prerelease/附件回下载校验；发布状态见 [RELEASE-005](verification/RELEASE-005.md)。用户已有远端 Node 安装，本次不会自动升级或部署。
 
 ## 新服务器流程
 
